@@ -78,7 +78,7 @@ let books=[],db=null,cur=null,segs=[],si=0,ci=0,playing=false,tok=0,speed=+(ls('
 const api=async(p,o={})=>{const r=await fetch('/api'+p,{...o,headers:{'x-app-password':ls('sb_pw')||'',...(o.headers||{})}});
   if(r.status===401){const pw=prompt('Password dell’app');if(pw){ls('sb_pw',pw);return api(p,o)}throw new Error('non autorizzato')}
   if(!r.ok){let m=r.status;try{m=(await r.json()).error||m}catch(e){}throw new Error(m)}return r};
-const dbPut=b=>api('/books',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});
+const dbPut=b=>api('/books',{method:'POST',headers:{'content-type':'application/json','x-meta':encodeURIComponent(JSON.stringify({id:b.id,title:b.title.slice(0,200),author:(b.author||'').slice(0,120),added:b.added}))},body:JSON.stringify({title:b.title,author:b.author,chapters:b.chapters})});
 const dbDel=id=>api('/books/'+id,{method:'DELETE'});
 const prog=id=>{try{return JSON.parse(ls('sb_p_'+id))||{}}catch(e){return{}}};
 function save(){if(cur)ls('sb_p_'+cur.id,JSON.stringify({ch:ci,si,pc:(ci+si/Math.max(1,segs.length))/cur.chapters.length}))}
