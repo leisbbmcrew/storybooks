@@ -1,7 +1,8 @@
-/* "Database" di Storybooks: un canale Telegram, letto e scritto dal browser con l'account dell'utente.
+/* Database di Storybooks: un gruppo (o canale) Telegram, letto e scritto dal browser con l'account dell'utente.
    Ogni libro = un messaggio con il documento <id>.json (nella didascalia: titolo e autore su due righe).
-   Il catalogo è l'elenco dei messaggi del canale: niente catalog.json, niente messaggio fissato. */
-import {tgConfigured,hasSession,clearSession,loadTg,newClient,tgLogin,tgClient,tgReset,tgEntity,tgErrText,tgSendFile,withTimeout,libSource,shimError,consoleLog} from "./telegram.js";
+   Il catalogo è l'elenco dei messaggi del gruppo: niente catalog.json, niente messaggio fissato.
+   Il pallino in alto (#tgout) mostra lo stato: verde = sincronizzato, giallo = in corso, rosso = problema, grigio = Telegram non collegato. */
+import {tgConfigured,hasSession,clearSession,loadTg,newClient,tgLogin,tgClient,tgReset,tgEntity,tgErrText,tgSendFile,withTimeout,libSource,shimError,consoleLog,tgMe} from "./telegram.js";
 import {TG_CHANNEL} from "./telegram-config.js";
 
 /* ---------- finestre di dialogo ---------- */
@@ -17,7 +18,7 @@ const show=()=>{if(!ov.isConnected)document.body.appendChild(ov);card.textConten
 let notaEl=null;
 const setInfo=t=>{if(notaEl)notaEl.textContent=t};
 
-/* fields: [{type,ph,ac}]; opts.sms: aggiunge "Non arriva? Invia via SMS". Restituisce i valori, oppure '__SMS__' */
+/* fields: [{type,ph,ac}]; opts.sms: "Non arriva? Invia via SMS". Restituisce i valori, '__SMS__', oppure null se l'utente sceglie "Più tardi" */
 function ask(title,text,fields,opts={}){
   show();
   card.append(el('h2',title,'margin:0 0 8px;font-size:20px'),el('p',text,'margin:0 0 12px;font-size:14px;line-height:1.45;color:var(--mut,#6b6b6b)'));
@@ -29,6 +30,7 @@ function ask(title,text,fields,opts={}){
     const go=()=>{const v=inputs.map(i=>i.value);if(v.some(x=>!x.trim()))return;res(v)};
     b.onclick=go;inputs.forEach(i=>i.onkeydown=e=>{if(e.key==='Enter')go()});
     if(opts.sms){const s=el('button','Non arriva? Invia via SMS',LINK);s.onclick=()=>res('__SMS__');card.appendChild(s)}
+    const k=el('button','Più tardi',LINK);k.onclick=()=>res(null);card.appendChild(k);
     inputs[0].focus();
   });
 }
@@ -39,7 +41,7 @@ function stato(t){
   card.append(el('h2','Collegamento a Telegram','margin:0 0 8px;font-size:20px'),el('p','Attendi, non chiudere la pagina.','margin:0 0 12px;font-size:14px;color:var(--mut,#6b6b6b)'),
     el('pre',righe.join('\n'),'font-size:12px;white-space:pre-wrap;color:var(--mut,#6b6b6b);margin:0'));
 }
-/* messaggio con "Riprova" (e, se serve, "Chiudi"); restituisce 'retry' o 'close' */
+/* messaggio con pulsante principale e, se serve, "Chiudi"; restituisce 'retry' o 'close' */
 function avviso(title,msg,dett,btn,close){
   show();notaEl=null;
   card.append(el('h2',title,'margin:0 0 8px;font-size:20px'),el('p',msg,'margin:0 0 12px;font-size:14px;line-height:1.45'));
@@ -49,12 +51,26 @@ function avviso(title,msg,dett,btn,close){
 }
 const dettagli=e=>[shimError&&('Buffer: '+shimError),libSource&&('Libreria: '+libSource),...(e&&e.details||[]),...consoleLog.slice(-5)].filter(Boolean).join('\n');
 
+/* ---------- pallino di stato ---------- */
+const LED={ok:['#2E9E5B','Sincronizzato con Telegram'],busy:['#E0A800','Sincronizzazione in corso…'],err:['#D93025','Problema di sincronizzazione'],off:['#8A94A6','Telegram non collegato: tocca per collegare']};
+let busyN=0,lastErr='',verified=false;
+const ledState=()=>!tgConfigured()||!hasSession()?'off':lastErr?'err':(busyN>0||!verified)?'busy':'ok';
+function ledUpdate(){
+  const b=document.getElementById('tgout');if(!b)return;
+  const s=ledState(),c=LED[s];
+  b.dataset.s=s;b.style.setProperty('--c',c[0]);
+  const t=s==='err'?c[1]+': '+lastErr:c[1];b.title=t;b.setAttribute('aria-label','Stato Telegram: '+t);
+}
+const accountLabel=()=>tgMe?[tgMe.firstName,tgMe.phone?'+'+tgMe.phone:''].filter(Boolean).join(' · '):'';
+
 /* ---------- accesso (una volta per dispositivo; la sessione resta nel browser) ---------- */
+/* restituisce true se ora c'è una sessione, false se l'utente ha scelto "Più tardi" */
 async function accessoTelegram(){
+  const chiedi=async(...a)=>{const r=await ask(...a);if(r===null)throw new Error('ANNULLATO');return r};
   const ui={
-    phone:async()=>(await ask('Collega Telegram','Inserisci il numero, con prefisso (es. +39…), dell’account Telegram che è proprietario o amministratore del gruppo «'+TG_CHANNEL+'».',[{type:'tel',ph:'+39…',ac:'tel'}]))[0],
-    code:async()=>{const r=await ask('Codice Telegram','Il codice arriva nell’app Telegram (chat «Telegram») se l’account è già aperto su un altro dispositivo, altrimenti via SMS.',[{ph:'Codice',ac:'one-time-code'}],{sms:true});return r==='__SMS__'?r:r[0].trim()},
-    password:async()=>(await ask('Password Telegram','Inserisci la password a due fattori di Telegram.',[{type:'password',ph:'Password'}]))[0],
+    phone:async()=>(await chiedi('Collega Telegram','Inserisci il numero, con prefisso (es. +39…), dell’account Telegram che è proprietario o amministratore del gruppo «'+TG_CHANNEL+'».',[{type:'tel',ph:'+39…',ac:'tel'}]))[0],
+    code:async()=>{const r=await chiedi('Codice Telegram','Il codice arriva nell’app Telegram (chat «Telegram») se l’account è già aperto su un altro dispositivo, altrimenti via SMS.',[{ph:'Codice',ac:'one-time-code'}],{sms:true});return r==='__SMS__'?r:r[0].trim()},
+    password:async()=>(await chiedi('Password Telegram','Inserisci la password a due fattori di Telegram.',[{type:'password',ph:'Password'}]))[0],
     info:setInfo
   };
   for(;;){
@@ -68,10 +84,11 @@ async function accessoTelegram(){
       stato('Connesso.');
       await tgLogin(tg,client,ui,stato);
       try{await client.disconnect()}catch(e){}
-      ov.remove();return;
+      ov.remove();ledUpdate();return true;
     }catch(e){
       try{if(client)await client.disconnect()}catch(_){}
       clearSession();
+      if(e&&e.message==='ANNULLATO'){ov.remove();ledUpdate();return false}
       await avviso('Telegram non collegato',tgErrText(e),dettagli(e),'Riprova');
     }
   }
@@ -85,10 +102,10 @@ async function conn(){
     await avviso('Configurazione mancante','Scrivi api_id e api_hash (da my.telegram.org) in telegram-config.js e ricarica la pagina.','','Ho capito');
     ov.remove();throw new Error('NO_CONFIG');
   }
-  const apri=async()=>{const c=await tgClient();const ent=await tgEntity();return {...c,ent}};
-  if(!hasSession())await login();
+  const apri=async()=>{const c=await tgClient();const ent=await tgEntity();verified=true;return {...c,ent}};
+  if(!hasSession()&&!(await login()))throw new Error('NO_LOGIN');
   try{return await apri()}
-  catch(e){if(e&&e.message==='NO_SESSION'){await login();return await apri()}throw e}
+  catch(e){if(e&&e.message==='NO_SESSION'){if(!(await login()))throw new Error('NO_LOGIN');return await apri()}throw e}
 }
 /* esegue fn; se la connessione è caduta la riapre e riprova una volta */
 async function run(fn){
@@ -98,13 +115,24 @@ async function run(fn){
     if(/^TIMEOUT|CONNECTION|not connected|disconnected|Cannot send requests/i.test(m)){tgReset();return await fn(await conn())}
     throw e}
 }
-const wrap=fn=>async(...a)=>{try{return await fn(...a)}catch(e){console.error(e);const x=new Error(tgErrText(e));x.cause=e;throw x}};
+/* ogni operazione accende il pallino giallo; un errore lo rende rosso, un successo verde */
+const wrap=fn=>async(...a)=>{
+  busyN++;ledUpdate();
+  try{const r=await fn(...a);lastErr='';return r}
+  catch(e){
+    console.error(e);
+    const msg=e&&e.message==='NO_LOGIN'?'Telegram non collegato':tgErrText(e);
+    if(!(e&&(e.message==='NO_LOGIN'||e.message==='NO_CONFIG')))lastErr=msg;
+    const x=new Error(msg);x.cause=e;throw x}
+  finally{busyN=Math.max(0,busyN-1);ledUpdate()}
+};
 
 /* ---------- libri ---------- */
-const idx=new Map();   /* id libro → id del messaggio nel canale */
+const idx=new Map();   /* id libro → id del messaggio nel gruppo */
 const fname=m=>(m.file&&m.file.name)||((m.document&&m.document.attributes)||[]).find(a=>a.className==='DocumentAttributeFilename')?.fileName||'';
 const saveCache=l=>{try{localStorage.setItem('sb_cat',JSON.stringify(l))}catch(e){}};
 function cached(){try{const l=JSON.parse(localStorage.getItem('sb_cat')||'[]');l.forEach(b=>idx.set(b.id,b.msg));return l}catch(e){return[]}}
+const annuncia=l=>window.dispatchEvent(new CustomEvent('sbtg-catalog',{detail:l}));
 async function _list({client,ent}){
   const ms=await withTimeout(client.getMessages(ent,{limit:3000}),90000,'TIMEOUT_LIST');
   const out=[];idx.clear();
@@ -113,14 +141,16 @@ async function _list({client,ent}){
     const id=name.slice(0,-5),[t,a]=String(m.message||'').split('\n');
     out.push({id,title:t||id,author:a||'',added:(m.date||0)*1000,msg:m.id});idx.set(id,m.id);
   }
-  saveCache(out);return out;
+  saveCache(out);annuncia(out);return out;
 }
 async function list(){
   for(;;){
     try{return await run(_list)}
     catch(e){
-      if(e&&e.message==='NO_CONFIG')throw e;
-      console.error(e);
+      const m=(e&&e.message)||'';
+      if(m==='NO_CONFIG')throw e;
+      if(m==='NO_LOGIN')return cached();      /* "Più tardi": si vede il catalogo salvato, pallino grigio */
+      console.error(e);lastErr=tgErrText(e);ledUpdate();
       const r=await avviso('Telegram non raggiungibile',tgErrText(e),dettagli(e),'Riprova',true);
       if(r==='close')throw new Error(tgErrText(e));
     }
@@ -162,5 +192,24 @@ async function logout(){
   tgReset();location.reload();
 }
 
-window.SBTG={cached,list:wrap(list),get:wrap(get),put:wrap(put),del:wrap(del),logout};
+/* ---------- tocco sul pallino ---------- */
+const listW=wrap(list);
+async function menu(){
+  const s=ledState();
+  if(s==='off'){if(await login()){try{await listW()}catch(e){}}return}
+  show();notaEl=null;
+  const nome=accountLabel();
+  card.append(el('h2','Telegram','margin:0 0 8px;font-size:20px'),
+    el('p',(s==='err'?LED.err[1]+'.':LED[s][1]+'.')+(nome?' Account: '+nome+'.':'')+' Gruppo: «'+TG_CHANNEL+'».','margin:0 0 12px;font-size:14px;line-height:1.45'));
+  if(s==='err')card.appendChild(el('pre',lastErr,'font-size:12px;white-space:pre-wrap;color:var(--mut,#6b6b6b);margin:0 0 12px;max-height:160px;overflow:auto'));
+  const b=el('button',s==='err'?'Riprova ora':'Aggiorna catalogo',BTN);
+  b.onclick=async()=>{ov.remove();try{await listW()}catch(e){}};
+  const x=el('button','Esci da Telegram',LINK);
+  x.onclick=()=>{if(confirm('Scollegare Telegram da questo dispositivo?'))logout()};
+  const k=el('button','Chiudi',LINK);k.onclick=()=>ov.remove();
+  card.append(b,x,k);
+}
+
+window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),logout,menu};
+ledUpdate();
 window.dispatchEvent(new Event('sbtg-load'));

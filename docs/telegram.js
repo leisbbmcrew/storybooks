@@ -6,10 +6,10 @@ for(const k of ['log','info','warn','error','debug']){const o=console[k];console
 const ok=v=>typeof v==="string"||typeof v==="number"?String(v).trim()!==""&&String(v).trim()!=="INSERISCI":false;
 export const credsOk=()=>ok(TG_API_ID)&&ok(TG_API_HASH)&&!isNaN(Number(String(TG_API_ID).trim()));
 export const tgConfigured=()=>credsOk()&&ok(TG_CHANNEL);
-export const hasSession=()=>{try{return !!localStorage.getItem('tg_session')}catch(e){return false}};
-export const clearSession=()=>{try{localStorage.removeItem('tg_session')}catch(e){}};
-const saveSession=s=>{try{localStorage.setItem('tg_session',s)}catch(e){}};
-const getSession=()=>{try{return localStorage.getItem('tg_session')||''}catch(e){return ''}};
+export const hasSession=()=>{try{return !!localStorage.getItem('sb_tg_session')}catch(e){return false}};
+export const clearSession=()=>{try{localStorage.removeItem('sb_tg_session')}catch(e){}};
+const saveSession=s=>{try{localStorage.setItem('sb_tg_session',s)}catch(e){}};
+const getSession=()=>{try{return localStorage.getItem('sb_tg_session')||''}catch(e){return ''}};
 export const withTimeout=(p,ms,msg)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error(msg||'TIMEOUT')),ms))]);
 
 /* La libreria locale viene provata per prima; gli altri indirizzi sono di ripiego. */
@@ -167,7 +167,8 @@ export async function tgSendFile(tg,client,entity,file,onProgress,caption){
   if(typeof file.read!=='function'){try{Object.defineProperty(file,'read',{value:()=>{},configurable:true})}catch(e){}}
   return client.sendFile(entity,{...base,file});
 }
+export let tgMe=null;   /* account con cui si è collegati (per mostrarlo accanto a «Esci») */
 export async function checkAuth(client,hadSession){
   if(!hadSession)return false;
-  try{await withTimeout(client.getMe(),30000,'TIMEOUT_AUTH');return true}catch(e){return false}
+  try{tgMe=await withTimeout(client.getMe(),30000,'TIMEOUT_AUTH');return true}catch(e){return false}
 }
