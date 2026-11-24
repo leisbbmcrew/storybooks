@@ -1,17 +1,20 @@
-# Storybooks (Cloudflare Workers + Telegram)
+# Storybooks
 
-Sempre online, senza server da gestire e senza carta di credito. Il database è un canale Telegram privato.
-Niente Firebase/Firestore: non ci sono regole Firestore; l’accesso è protetto da `APP_PASSWORD` e il token resta nei segreti di Cloudflare.
+App web in stile Storytel: carichi libri (EPUB, TXT, HTML, Markdown), finiscono nella libreria e li ascolti con la voce del browser.
 
-## Deploy
-1. Carica questa cartella su un repository GitHub (privato va bene).
-2. Cloudflare → Workers & Pages → Create → **Import a repository** → scegli il repo. Lascia i comandi predefiniti (`npx wrangler deploy`).
-3. Dopo il primo deploy: Worker → Settings → **Variables and Secrets** → aggiungi come **Secret**:
-   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `APP_PASSWORD`.
-4. Apri l’indirizzo `https://storybooks.<tuo-sottodominio>.workers.dev` e inserisci la password.
+**Database: un canale Telegram privato.** Il browser parla direttamente con Telegram (metodo di carmamedical): niente Worker, niente bot, niente token. Ogni libro è un messaggio con un file `bXXXX.json` e la didascalia «titolo / autore». Il catalogo è l'elenco dei messaggi del canale.
 
-Il bot deve essere amministratore del canale (pubblica, elimina, fissa messaggi).
+## Configurazione
+1. my.telegram.org → «API development tools» → crea una nuova app → copia `api_id` e `api_hash` in `public/telegram-config.js`.
+2. Nello stesso file `TG_CHANNEL` è il nome esatto del canale («Storybooks»).
+3. L'account Telegram con cui accedi deve essere proprietario o amministratore del canale.
+4. Al primo avvio su ogni dispositivo l'app chiede numero e codice Telegram. La sessione resta nel browser; «Esci» la chiude.
 
-## Limiti
-- Formati: EPUB, TXT, HTML, Markdown. Ogni libro sotto ~19 MB di testo.
-- Piano gratuito Cloudflare: 100.000 richieste al giorno.
+## Pubblicazione
+Cloudflare (Workers Builds) pubblica la cartella `public/` a ogni commit. Nessuna variabile o Secret da impostare.
+
+## Note
+- `public/telegram-lib.js` è la libreria Telegram già compilata. Per rifarla: GitHub → Actions → «Crea libreria Telegram» → Run workflow.
+- Telefono e PC hanno punti di ascolto separati (salvati nel browser).
+- PDF non supportati.
+- Non mettere api_hash o sessioni in chat; usa un account Telegram dedicato se possibile.
