@@ -4,12 +4,18 @@ const MAX = 19e6; // limite di download del Bot API: 20 MB
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json' } });
 let cache = null, at = 0; // cache in memoria dell'istanza (30 s)
 
-async function tg(env, method, body) {
+async function tg(env, method, body, tentativo = 0) {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`;
   const r = await fetch(url, body instanceof FormData
     ? { method: 'POST', body }
     : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
   const j = await r.json();
+  // Troppe richieste: se l'attesa è breve, aspetta e riprova una volta
+  const ra = j.parameters?.retry_after;
+  if (!j.ok && r.status === 429 && ra && ra <= 25 && tentativo < 1) {
+    await new Promise(res => setTimeout(res, (ra + 1) * 1000));
+    return tg(env, method, body, tentativo + 1);
+  }
   if (!j.ok) throw new Error(`Telegram ${method}: ${j.description}`);
   return j.result;
 }
