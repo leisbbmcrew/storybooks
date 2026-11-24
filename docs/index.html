@@ -175,53 +175,87 @@ $('#main').onclick=async e=>{
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));render()});
 /* ---------- text → speech segments (intonation / paraverbal) ---------- */
 const clean=s=>s.replace(/[«»“”"*_]/g,'').replace(/^[\s—–-]+/,'').replace(/\s[—–]\s?/g,', ').replace(/\s+/g,' ').trim();
+const MAXC=190,MINC=70;   /* un brano = 1-3 frasi (≈70-190 caratteri), mai a cavallo di due paragrafi */
+function splitLong(t){   /* frasi molto lunghe: si spezza alle virgole, poi agli spazi */
+  if(t.length<=MAXC)return[t];
+  const out=[];let a='';
+  for(const x of t.split(/(?<=[,;:])\s+/)){
+    if(a&&(a+' '+x).length>MAXC){out.push(a);a=''}
+    a=a?a+' '+x:x;
+    while(a.length>MAXC){let k=a.lastIndexOf(' ',MAXC);if(k<40)k=MAXC;out.push(a.slice(0,k));a=a.slice(k).trim()}
+  }
+  if(a)out.push(a);return out;
+}
 function buildSegs(ch){
   const out=[];let bal=0;
+  const prosody=(t,dlg)=>{   /* intonazione dalla punteggiatura finale e dai dialoghi */
+    const end=t.replace(/["»”’)\s]+$/,'').slice(-1);let r=1,p=dlg?1.1:.97;
+    if(end==='?')p+=.14;else if(end==='!'){p+=.1;r=1.07}else if(end==='…'||/\.\.\.$/.test(t)){r=.88;p-=.05}
+    if(dlg)r*=1.03;return{r,p};
+  };
   ch.p.forEach((para,pi)=>{
-    const ss=para.match(/[^.!?…]+(?:[.!?…]+["»”’)]*|$)\s*/g)||[para];
     const head=pi===0&&ch.p.length>1&&para.length<90&&!/[.!?…]$/.test(para);
-    ss.forEach((s,k)=>{
-      const t=s.trim();if(!/[\p{L}\p{N}]/u.test(t))return;
+    if(head){const c=clean(para);if(c)out.push({d:para,t:c,r:.9,p:.94});return}
+    const ss=para.match(/[^.!?…]+(?:[.!?…]+["»”’)]*|$)\s*/g)||[para];
+    let buf='',bdlg=false;
+    const flush=()=>{const c=clean(buf);if(c){const q=prosody(buf.trim(),bdlg);out.push({d:buf.trim(),t:c,r:q.r,p:q.p})}buf=''};
+    ss.forEach(x=>{
+      const t=x.trim();if(!/[\p{L}\p{N}]/u.test(t))return;
       const open=/^[«“"—–-]/.test(t),was=bal>0;
       bal=Math.max(0,bal+(t.match(/[«“]/g)||[]).length-(t.match(/[»”]/g)||[]).length);
-      const dlg=open||was,end=t.replace(/["»”’)\s]+$/,'').slice(-1);
-      let r=1,p=dlg?1.1:.97,pause=300;
-      if(head){r=.9;p=.94;pause=950}
-      else if(end==='?'){p+=.14;pause=400}
-      else if(end==='!'){p+=.1;r=1.07;pause=380}
-      else if(end==='…'||/\.\.\.$/.test(t)){r=.88;p-=.05;pause=680}
-      else if(end===':'||end===';'){pause=450}
-      if(dlg&&!head)r*=1.03;
-      if(k===ss.length-1&&!head)pause=Math.max(pause,720);
-      const parts=t.length>130?t.split(/(?<=[,;:])\s+/):[t],gr=[];let a='';
-      for(const x of parts){a=a?a+' '+x:x;if(a.length>=45){gr.push(a);a=''}}
-      if(a){if(gr.length&&a.length<25)gr[gr.length-1]+=' '+a;else gr.push(a)}
-      gr.forEach((x,j)=>{const last=j===gr.length-1,c=clean(x);if(c)out.push({d:x,t:c,r,p:last?p:p+.03,pause:last?pause:170})});
+      const dlg=open||was;
+      if(buf&&dlg!==bdlg)flush();            /* si cambia tono tra narrazione e dialogo */
+      for(const piece of splitLong(t)){
+        if(buf&&(buf+' '+piece).length>MAXC)flush();
+        if(!buf)bdlg=dlg;
+        buf=buf?buf+' '+piece:piece;
+        if(buf.length>=MINC)flush();
+      }
     });
+    flush();
   });
-  return out.length?out:[{d:'…',t:'…',r:1,p:1,pause:300}];
+  return out.length?out:[{d:'…',t:'…',r:1,p:1}];
 }
 /* ---------- speech engine ---------- */
-function loadVoices(){
-  const sc=v=>(/natural|neural|premium|enhanced|online|siri/i.test(v.name)?3:0)+(/google|elsa|isabella|diego|alice|federica|luca|paola/i.test(v.name)?1:0);
-  voices=(speechSynthesis.getVoices()||[]).filter(v=>/^it/i.test(v.lang)).sort((a,b)=>sc(b)-sc(a));
-}
+const qual=v=>{const n=v.name+' '+(v.voiceURI||'');let q=0;
+  if(/natural|neural/i.test(n))q+=6;if(/premium|enhanced|migliorat|potenziat/i.test(n))q+=5;
+  if(/siri/i.test(n))q+=4;if(/google/i.test(n))q+=3;if(v.localService===false)q+=1;
+  if(/elsa|isabella|diego|giuseppe|alice|federica|luca|paola|emma/i.test(n))q+=1;
+  if(/compact|eloquence|espeak/i.test(n))q-=3;return q};
+function loadVoices(){voices=(speechSynthesis.getVoices()||[]).filter(v=>/^it/i.test(v.lang.replace('_','-'))).sort((a,b)=>qual(b)-qual(a)||a.name.localeCompare(b.name))}
 try{loadVoices();speechSynthesis.onvoiceschanged=loadVoices}catch(e){}
 const pickVoice=()=>voices.find(v=>v.name===voiceName)||voices[0]||null;
-function step(my){
-  if(my!==tok||!playing)return;
-  if(si>=segs.length){if(ci+1<cur.chapters.length)loadCh(ci+1,0);else{pause();return}}
-  const g=segs[si],u=new SpeechSynthesisUtterance(g.t);
-  u.lang='it-IT';const v=pickVoice();if(v)u.voice=v;
-  u.rate=Math.min(2,Math.max(.5,g.r*speed));u.pitch=Math.min(2,Math.max(0,g.p));
-  u.onend=()=>{if(my!==tok)return;si++;if(si%4===0)save();setTimeout(()=>step(my),g.pause/speed)};
-  u.onerror=e=>{if(my!==tok||e.error==='interrupted'||e.error==='canceled')return;si++;setTimeout(()=>step(my),50)};
-  ui();speechSynthesis.speak(u);
+/* Lettura continua: i prossimi brani vengono messi in coda al sintetizzatore mentre il corrente è in corso,
+   così la voce non aspetta e non ricarica nulla a ogni punteggiatura. I capitoli si susseguono da soli. */
+const LOOK=3,clampR=x=>Math.min(2,Math.max(.5,x)),clampP=x=>Math.min(2,Math.max(0,x));
+let pend=0,qc=0,qi=0,qs=[],ka=0;
+function enqueue(my,v,c,i,arr){
+  const g=arr[i],u=new SpeechSynthesisUtterance(g.t);
+  u.lang='it-IT';if(v)u.voice=v;
+  u.rate=clampR(g.r*speed);u.pitch=clampP(g.p);
+  pend++;
+  u.onstart=()=>{if(my!==tok)return;if(c!==ci){ci=c;segs=arr}si=i;if(i%4===0)save();ui()};
+  u.onend=()=>{pend--;if(my===tok)feed(my)};
+  u.onerror=e=>{pend--;if(my!==tok||e.error==='interrupted'||e.error==='canceled')return;feed(my)};
+  speechSynthesis.speak(u);
 }
-function play(){if(!cur)return;if(!('speechSynthesis' in window)){toast('Questo browser non supporta la sintesi vocale');return}speechSynthesis.cancel();playing=true;const my=++tok;ui();setTimeout(()=>step(my),60)}
-function pause(){playing=false;tok++;try{speechSynthesis.cancel()}catch(e){}save();ui()}
+function feed(my){
+  if(my!==tok||!playing)return;
+  const v=pickVoice();
+  while(pend<LOOK){
+    if(qi>=qs.length){if(qc+1>=cur.chapters.length)break;qc++;qs=buildSegs(cur.chapters[qc]);qi=0}
+    enqueue(my,v,qc,qi,qs);qi++;
+  }
+  if(pend===0&&qi>=qs.length&&qc+1>=cur.chapters.length)pause();   /* fine del libro */
+}
+/* alcune voci online di Chrome si interrompono dopo ~15 s: un "respiro" ogni 10 s le tiene vive */
+function keepAlive(v){clearInterval(ka);ka=0;
+  if(v&&v.localService===false&&/google/i.test(v.name)&&!/android/i.test(navigator.userAgent))
+    ka=setInterval(()=>{if(speechSynthesis.speaking&&!speechSynthesis.paused){speechSynthesis.pause();speechSynthesis.resume()}},10000)}
+function play(){if(!cur)return;if(!('speechSynthesis' in window)){toast('Questo browser non supporta la sintesi vocale');return}speechSynthesis.cancel();playing=true;const my=++tok;pend=0;qc=ci;qs=segs;qi=si;keepAlive(pickVoice());ui();setTimeout(()=>feed(my),60)}
+function pause(){playing=false;tok++;pend=0;clearInterval(ka);ka=0;try{speechSynthesis.cancel()}catch(e){}save();ui()}
 function loadCh(i,s){ci=i;segs=buildSegs(cur.chapters[i]);si=Math.max(0,Math.min(s,segs.length-1))}
-function jump(i,s){const was=playing;tok++;try{speechSynthesis.cancel()}catch(e){}loadCh(i,s);save();was?play():ui()}
+function jump(i,s){const was=playing;tok++;pend=0;try{speechSynthesis.cancel()}catch(e){}loadCh(i,s);save();was?play():ui()}
 async function openBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   if(!b.chapters){toast('Scarico il libro…');try{b.chapters=(await dbGet(id)).chapters}catch(e){return toast('Errore di download: '+e.message)}}
@@ -248,16 +282,27 @@ $('#seek').onchange=e=>jump(ci,Math.round(e.target.value/1000*(segs.length-1)));
 $('#bk').onclick=()=>jump(ci,si-4);$('#fw').onclick=()=>jump(ci,si+4);
 $('#pc').onclick=()=>jump(Math.max(0,si>3?ci:ci-1),0);
 $('#nc').onclick=()=>ci+1<cur.chapters.length&&jump(ci+1,0);
-$('#sp').onclick=()=>{const l=[.8,.9,1,1.1,1.25,1.5];speed=l[(l.indexOf(speed)+1)%l.length];ls('sb_speed',speed);ui()};
+$('#sp').onclick=()=>{const l=[.8,.9,1,1.1,1.25,1.5];speed=l[(l.indexOf(speed)+1)%l.length];ls('sb_speed',speed);if(playing)jump(ci,si);else ui()};
 $('#sl').onclick=()=>{const l=[0,15,30,60];sleepI=(sleepI+1)%4;clearTimeout(sleepT);const m=l[sleepI];
   $('#sl').textContent=m?`☾ ${m} min`:'☾ Timer';if(m){sleepT=setTimeout(()=>{pause();$('#sl').textContent='☾ Timer';sleepI=0;toast('Timer scaduto: buonanotte')},m*60000)}};
 function sheet(h){$('#sheet').innerHTML=h;$('#sheet').style.display='block';$('#scrim').style.display='block'}
 $('#scrim').onclick=()=>{$('#sheet').style.display=$('#scrim').style.display='none'};
 $('#chs').onclick=()=>{sheet('<h3>Capitoli</h3>'+cur.chapters.map((c,i)=>`<button class="it ${i===ci?'on':''}" data-c="${i}">${i+1}. ${esc(c.t)}</button>`).join(''));
   $('#sheet').onclick=e=>{const b=e.target.closest('[data-c]');if(b){$('#scrim').click();jump(+b.dataset.c,0)}}};
+const vTag=v=>/natural|neural/i.test(v.name)?'★ Neurale · online':/premium|enhanced|migliorat|potenziat/i.test(v.name)?'★ Alta qualità':v.localService===false?'Online':'Sul dispositivo';
+function vTips(){
+  const u=navigator.userAgent;
+  const t=/iPhone|iPad/i.test(u)?'Su iPhone/iPad: Impostazioni → Accessibilità → Contenuto letto → Voci → Italiano, e scarica le voci «Premium» o «Avanzata» (per esempio Alice, Federica, Luca). Poi riapri questa pagina.'
+   :/Android/i.test(u)?'Su Android: Impostazioni → Sintesi vocale (o «Servizi vocali di Google») → installa le voci italiane di qualità alta e scegli la migliore. Poi riapri questa pagina.'
+   :/Edg\//.test(u)?'In Edge compaiono le voci «Online (Natural)» di Microsoft (Elsa, Diego, Isabella e altre): sono tra le più realistiche e non richiedono installazioni.'
+   :/Mac/i.test(u)?'Su Mac: Impostazioni → Accessibilità → Contenuto letto → Voce di sistema → Gestisci voci → Italiano, e scarica le voci «Premium». Con Edge trovi anche le voci «Online (Natural)».'
+   :'Per voci molto più naturali apri questa pagina con Microsoft Edge: offre le voci «Online (Natural)» (Elsa, Diego, Isabella e altre) senza installare nulla.';
+  return '<p style="color:var(--mut);font-size:12px;line-height:1.45">'+t+'</p>';
+}
+function sample(){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('Buonasera. Questa è la mia voce: ti leggerò il libro con calma, fermandomi quando serve.');u.lang='it-IT';const v=pickVoice();if(v)u.voice=v;u.rate=clampR(speed);speechSynthesis.speak(u)}catch(e){}}
 $('#vo').onclick=()=>{loadVoices();const cv=pickVoice();
-  sheet('<h3>Voce di lettura</h3>'+(voices.length?voices.map(v=>`<button class="it ${cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}</button>`).join('')+'<p style="color:var(--mut);font-size:12px">Le voci «Natural», «Neural» o «Premium» del tuo dispositivo rendono intonazione e pause in modo molto più naturale.</p>':'<p>Nessuna voce italiana trovata sul dispositivo. Installane una dalle impostazioni di sistema (Voce / Accessibilità).</p>'));
-  $('#sheet').onclick=e=>{const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si)}}};
+  sheet('<h3>Voce di lettura</h3>'+(voices.length?voices.map(v=>`<button class="it ${cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}<br><small style="color:var(--mut)">${vTag(v)}</small></button>`).join('')+vTips():'<p>Nessuna voce italiana trovata sul dispositivo.</p>'+vTips()));
+  $('#sheet').onclick=e=>{const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si);else sample()}}};
 (async()=>{await sbReady();books=SBTG.cached();render();try{books=await SBTG.list()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}render()})();
 $('#tgout').onclick=async()=>{await sbReady();SBTG.menu()};
 let rt=0;addEventListener('sbtg-cover',e=>{covers[e.detail.id]=e.detail.url;clearTimeout(rt);rt=setTimeout(()=>{render();if(cur&&$('#pcv')&&covers[cur.id]){$('#pcv').innerHTML=cover(cur);$('#mcv').innerHTML=cover(cur)}},150)});
