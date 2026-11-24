@@ -128,20 +128,26 @@ const wrap=fn=>async(...a)=>{
 };
 
 /* ---------- libri ---------- */
-const idx=new Map();   /* id libro → id del messaggio nel gruppo */
+const idx=new Map();      /* id libro → id del messaggio nel gruppo */
+const covIdx=new Map();   /* id libro → id del messaggio con la copertina (c<id>.jpg) */
 const fname=m=>(m.file&&m.file.name)||((m.document&&m.document.attributes)||[]).find(a=>a.className==='DocumentAttributeFilename')?.fileName||'';
 const saveCache=l=>{try{localStorage.setItem('sb_cat',JSON.stringify(l))}catch(e){}};
-function cached(){try{const l=JSON.parse(localStorage.getItem('sb_cat')||'[]');l.forEach(b=>idx.set(b.id,b.msg));return l}catch(e){return[]}}
+function cached(){
+  try{const l=JSON.parse(localStorage.getItem('sb_cat')||'[]');l.forEach(b=>{idx.set(b.id,b.msg);if(b.cover)covIdx.set(b.id,b.cover)});queueMicrotask(()=>sweep(l));return l}
+  catch(e){return[]}
+}
 const annuncia=l=>window.dispatchEvent(new CustomEvent('sbtg-catalog',{detail:l}));
 async function _list({client,ent}){
   const ms=await withTimeout(client.getMessages(ent,{limit:3000}),90000,'TIMEOUT_LIST');
-  const out=[];idx.clear();
+  const out=[],covs=new Map();idx.clear();covIdx.clear();
+  for(const m of ms){const mc=/^c(b[0-9a-z]+)\.jpg$/i.exec(fname(m));if(mc&&!covs.has(mc[1]))covs.set(mc[1],m.id)}   /* il più recente vince */
   for(const m of ms){
     const name=fname(m);if(!/^b[0-9a-z]+\.json$/i.test(name))continue;
     const id=name.slice(0,-5),[t,a]=String(m.message||'').split('\n');
-    out.push({id,title:t||id,author:a||'',added:(m.date||0)*1000,msg:m.id});idx.set(id,m.id);
+    out.push({id,title:t||id,author:a||'',added:(m.date||0)*1000,msg:m.id,cover:covs.get(id)||0});
+    idx.set(id,m.id);if(covs.get(id))covIdx.set(id,covs.get(id));
   }
-  saveCache(out);annuncia(out);return out;
+  saveCache(out);annuncia(out);queueMicrotask(()=>sweep(out));return out;
 }
 async function list(){
   for(;;){
@@ -166,31 +172,153 @@ async function get(id,onProgress){
     return JSON.parse(new TextDecoder().decode(buf));
   });
 }
+const one=s=>String(s||'').replace(/\s+/g,' ').trim();
 async function put(b,onProgress){
   return run(async({client,tg,ent})=>{
     const body=JSON.stringify({title:b.title,author:b.author,chapters:b.chapters});
     const file=new File([body],b.id+'.json',{type:'application/json'});
     if(file.size>1.9e9)throw new Error('Libro troppo grande');
-    const one=s=>String(s||'').replace(/\s+/g,' ').trim();
     const caption=one(b.title).slice(0,200)+'\n'+one(b.author).slice(0,120);
     const msg=await tgSendFile(tg,client,ent,file,p=>{if(onProgress)onProgress(typeof p==='number'?p:0)},caption);
     idx.set(b.id,msg.id);
-    const l=cached().filter(x=>x.id!==b.id);l.push({id:b.id,title:b.title,author:b.author||'',added:b.added,msg:msg.id});saveCache(l);
+    const l=cached().filter(x=>x.id!==b.id);l.push({id:b.id,title:b.title,author:b.author||'',added:b.added,msg:msg.id,cover:0});saveCache(l);
   });
 }
 async function del(id){
   return run(async c=>{
     if(!idx.has(id))await _list(c);
-    const mid=idx.get(id);
-    if(mid)await c.client.deleteMessages(c.ent,[mid],{revoke:true});
-    idx.delete(id);saveCache(cached().filter(x=>x.id!==id));
+    const ids=[idx.get(id),covIdx.get(id)].filter(Boolean);
+    if(ids.length)await c.client.deleteMessages(c.ent,ids,{revoke:true});
+    idx.delete(id);covIdx.delete(id);saveCache(cached().filter(x=>x.id!==id));
+    idbDel(id);if(urls[id]){URL.revokeObjectURL(urls[id]);delete urls[id]}
   });
 }
 async function logout(){
   try{const {client,tg}=await withTimeout(tgClient(),15000,'TIMEOUT');await withTimeout(client.invoke(new tg.Api.auth.LogOut()),10000,'TIMEOUT')}catch(e){}
-  clearSession();try{localStorage.removeItem('sb_cat')}catch(e){}
+  clearSession();try{localStorage.removeItem('sb_cat');localStorage.removeItem('sb_cov_try');indexedDB.deleteDatabase('sb_cov')}catch(e){}
   tgReset();location.reload();
 }
+
+/* ---------- copertine ----------
+   Per ogni libro: si cerca online (Google Books, poi Open Library), altrimenti si usa quella dentro l'EPUB.
+   L'immagine viene ridimensionata, salvata nel gruppo come documento c<id>.jpg (abbinata al libro dall'id)
+   e tenuta anche nel browser (IndexedDB) per non riscaricarla. */
+const urls={};            /* id libro → indirizzo locale dell'immagine, per <img> */
+const idb=()=>new Promise((res,rej)=>{const r=indexedDB.open('sb_cov',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const idbGet=async k=>{try{const d=await idb();return await new Promise((res,rej)=>{const q=d.transaction('kv').objectStore('kv').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})}catch(e){return undefined}};
+const idbSet=async(k,v)=>{try{const d=await idb();await new Promise((res,rej)=>{const t=d.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=res;t.onerror=()=>rej(t.error)})}catch(e){}};
+const idbDel=async k=>{try{const d=await idb();await new Promise(res=>{const t=d.transaction('kv','readwrite');t.objectStore('kv').delete(k);t.oncomplete=res;t.onerror=res})}catch(e){}};
+const sig=ms=>{try{return AbortSignal.timeout(ms)}catch(e){const c=new AbortController();setTimeout(()=>c.abort(),ms);return c.signal}};
+const getJSON=async u=>{const r=await fetch(u,{signal:sig(12000)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()};
+const getImg=async u=>{const r=await fetch(u,{signal:sig(20000)});if(!r.ok)throw new Error('HTTP '+r.status);const b=await r.blob();if(!/^image\//.test(b.type)||b.size<1500)throw new Error('non è una copertina');return b};
+const toks=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z0-9]+/).filter(w=>w.length>2);
+const simil=(a,b)=>{const A=toks(a),B=new Set(toks(b));return A.length?A.filter(w=>B.has(w)).length/A.length:0};   /* quanto il titolo trovato somiglia a quello cercato */
+const enc=encodeURIComponent;
+
+async function daGoogleBooks(title,author){
+  for(const q of [author?`intitle:${title} inauthor:${author}`:'',`intitle:${title}`].filter(Boolean)){
+    const j=await getJSON('https://www.googleapis.com/books/v1/volumes?printType=books&maxResults=8&fields=items(volumeInfo(title,imageLinks))&q='+enc(q));
+    for(const it of j.items||[]){
+      const v=it.volumeInfo||{},l=v.imageLinks;if(!l||simil(title,v.title)<.6)continue;
+      const u=(l.thumbnail||l.smallThumbnail||'').replace(/^http:/,'https:').replace(/&edge=curl/,'');if(!u)continue;
+      try{return await getImg(u.replace(/zoom=\d/,'zoom=0'))}catch(e){}
+      return await getImg(u);
+    }
+  }
+  return null;
+}
+async function daOpenLibrary(title,author){
+  for(const p of [author?`title=${enc(title)}&author=${enc(author)}`:'',`title=${enc(title)}`].filter(Boolean)){
+    const j=await getJSON('https://openlibrary.org/search.json?limit=8&fields=title,cover_i&'+p);
+    for(const d of j.docs||[]){
+      if(!d.cover_i||simil(title,d.title)<.6)continue;
+      return await getImg(`https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg?default=false`);
+    }
+  }
+  return null;
+}
+async function cercaOnline(title,author){
+  for(const [nome,f] of [['Google Books',daGoogleBooks],['Open Library',daOpenLibrary]]){
+    try{const bl=await f(one(title),one(author));if(bl)return {blob:bl,src:nome}}
+    catch(e){console.warn('Copertina '+nome+': '+((e&&e.message)||e))}
+  }
+  return null;
+}
+/* ridimensiona (lato massimo 700 px) e converte in JPEG; rifiuta immagini minuscole o non valide */
+async function preparaImmagine(blob){
+  const u=URL.createObjectURL(blob);
+  try{
+    const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('immagine non valida'));i.src=u});
+    const w=img.naturalWidth,h=img.naturalHeight;if(Math.min(w,h)<80)throw new Error('immagine troppo piccola');
+    const k=Math.min(1,700/Math.max(w,h)),c=document.createElement('canvas');c.width=Math.round(w*k);c.height=Math.round(h*k);
+    const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);
+    return await new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error('conversione non riuscita')),'image/jpeg',.86));
+  }finally{URL.revokeObjectURL(u)}
+}
+function mostra(id,blob){
+  if(urls[id])URL.revokeObjectURL(urls[id]);
+  urls[id]=URL.createObjectURL(blob);
+  window.dispatchEvent(new CustomEvent('sbtg-cover',{detail:{id,url:urls[id]}}));
+}
+/* invia la copertina al gruppo e la abbina al libro (nome file c<id>.jpg) */
+async function salvaCopertina(b,jpg){
+  await run(async({client,tg,ent})=>{
+    const file=new File([jpg],'c'+b.id+'.jpg',{type:'image/jpeg'});
+    const msg=await tgSendFile(tg,client,ent,file,()=>{},'Copertina: '+one(b.title).slice(0,150));
+    covIdx.set(b.id,msg.id);
+    saveCache(cached().map(x=>x.id===b.id?{...x,cover:msg.id}:x));
+  });
+  await idbSet(b.id,jpg);mostra(b.id,jpg);
+}
+const lavoro=new Set();   /* libri per cui è già in corso la ricerca */
+/* b = {id,title,author}; embedded = copertina contenuta nell'EPUB (Blob), usata se online non si trova nulla.
+   Restituisce 'Google Books', 'Open Library', 'epub' oppure null se non è stato possibile trovarne una. */
+async function cover(b,embedded){
+  if(lavoro.has(b.id))return null;
+  lavoro.add(b.id);
+  try{
+    const online=await cercaOnline(b.title,b.author);
+    const cand=[online&&[online.blob,online.src],embedded&&[embedded,'epub']].filter(Boolean);
+    for(const [blob,src] of cand){
+      let jpg;try{jpg=await preparaImmagine(blob)}catch(e){console.warn('Copertina scartata ('+src+'): '+e.message);continue}
+      await salvaCopertina(b,jpg);return src;
+    }
+    return null;
+  }finally{lavoro.delete(b.id)}
+}
+/* all'avvio e a ogni aggiornamento del catalogo: mostra le copertine già salvate e cerca quelle che mancano */
+let sweeping=false,again=null;
+const triedGet=()=>{try{return JSON.parse(localStorage.getItem('sb_cov_try')||'{}')}catch(e){return{}}};
+async function sweep(list){
+  if(sweeping){again=list;return}
+  sweeping=true;
+  try{
+    const need=[];
+    for(const b of list){
+      if(!b.cover||urls[b.id])continue;
+      const bl=await idbGet(b.id);
+      if(bl)mostra(b.id,bl);else need.push(b);
+    }
+    if(!hasSession()||!tgConfigured())return;
+    if(need.length)try{
+      await run(async c=>{
+        const ms=await c.client.getMessages(c.ent,{ids:need.map(b=>b.cover)});
+        for(const m of ms){
+          const b=m&&need.find(x=>x.cover===m.id);if(!b)continue;
+          try{const buf=await withTimeout(c.client.downloadMedia(m,{}),60000,'TIMEOUT_DOWNLOAD');const bl=new Blob([buf],{type:'image/jpeg'});await idbSet(b.id,bl);mostra(b.id,bl)}
+          catch(e){console.warn('Copertina '+b.id+': '+e.message)}
+        }
+      });
+    }catch(e){console.warn('Copertine: '+((e&&e.message)||e))}
+    const tr=triedGet(),now=Date.now();
+    for(const b of list){
+      if(b.cover||lavoro.has(b.id)||(tr[b.id]&&now-tr[b.id]<3*864e5))continue;   /* se non si trova, riprova dopo 3 giorni */
+      tr[b.id]=now;try{localStorage.setItem('sb_cov_try',JSON.stringify(tr))}catch(e){}
+      try{await cover(b,null)}catch(e){console.warn('Copertina «'+b.title+'»: '+((e&&e.message)||e));break}
+    }
+  }finally{sweeping=false;if(again){const l=again;again=null;sweep(l)}}
+}
+function cercaMancanti(){try{localStorage.removeItem('sb_cov_try')}catch(e){}sweep(cached())}
 
 /* ---------- tocco sul pallino ---------- */
 const listW=wrap(list);
@@ -204,12 +332,13 @@ async function menu(){
   if(s==='err')card.appendChild(el('pre',lastErr,'font-size:12px;white-space:pre-wrap;color:var(--mut,#6b6b6b);margin:0 0 12px;max-height:160px;overflow:auto'));
   const b=el('button',s==='err'?'Riprova ora':'Aggiorna catalogo',BTN);
   b.onclick=async()=>{ov.remove();try{await listW()}catch(e){}};
+  const cm=el('button','Cerca le copertine mancanti',LINK);cm.onclick=()=>{ov.remove();cercaMancanti()};
   const x=el('button','Esci da Telegram',LINK);
   x.onclick=()=>{if(confirm('Scollegare Telegram da questo dispositivo?'))logout()};
   const k=el('button','Chiudi',LINK);k.onclick=()=>ov.remove();
-  card.append(b,x,k);
+  card.append(b,cm,x,k);
 }
 
-window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),logout,menu};
+window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),logout,menu};
 ledUpdate();
 window.dispatchEvent(new Event('sbtg-load'));

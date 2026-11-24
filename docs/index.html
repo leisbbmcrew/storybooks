@@ -21,6 +21,7 @@ h2{font-size:18px;margin:22px 0 10px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:14px}
 .grid .card{flex:none}
 .cv{aspect-ratio:1;border-radius:10px;color:#fff;padding:10px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;width:100%}
+.cv .cvi{display:block;flex:1;min-height:0;width:100%;object-fit:contain}
 .cv b{font-size:14px;line-height:1.15}.cv i{font-size:11px;opacity:.85}
 .card p{margin:6px 0 0;font-weight:600;font-size:13px;line-height:1.2}.card small{color:var(--mut)}
 .del{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;line-height:24px}
@@ -114,7 +115,17 @@ async function parseEpub(f){
     const hd=d.querySelector('h1,h2,h3');k++;
     chs.push({t:hd?norm(hd.textContent).slice(0,70):'Capitolo '+k,p:ps});
   }
-  return{title:g('dc:title'),author:g('dc:creator'),chapters:chs};
+  let embedded=null;
+  try{
+    const it=[...opf.getElementsByTagName('item')],img=i=>/^image\//.test(i.getAttribute('media-type')||'');
+    const meta=[...opf.getElementsByTagName('meta')].find(m=>m.getAttribute('name')==='cover');
+    const e=it.find(i=>(i.getAttribute('properties')||'').split(/\s+/).includes('cover-image'))||(meta&&it.find(i=>i.getAttribute('id')===meta.getAttribute('content')&&img(i)))||it.find(i=>/cover/i.test((i.getAttribute('id')||'')+(i.getAttribute('href')||''))&&img(i));
+    if(e){
+      const pp=[];(dir+decodeURIComponent(e.getAttribute('href').split('#')[0])).split('/').forEach(x=>x==='..'?pp.pop():x!=='.'&&pp.push(x));
+      const zf=z.file(pp.join('/'));if(zf)embedded=new Blob([await zf.async('uint8array')],{type:e.getAttribute('media-type')||'image/jpeg'});
+    }
+  }catch(e){}
+  return{title:g('dc:title'),author:g('dc:creator'),chapters:chs,embedded};
 }
 async function addFile(f){
   const ext=f.name.split('.').pop().toLowerCase(),base=f.name.replace(/\.[^.]+$/,'');
@@ -128,13 +139,18 @@ async function addFile(f){
     }
     if(!b.chapters.length)throw new Error('vuoto');
     b.title=b.title||base;b.id='b'+Date.now()+Math.random().toString(36).slice(2,6);b.added=Date.now();
-    await dbPut(b);books.push(b);toast('Aggiunto: '+b.title);
+    await dbPut(b);books.push(b);toast('Aggiunto: '+b.title+' · cerco la copertina…');
+    try{const src=await SBTG.cover(b,b.embedded);toast(src?(src==='epub'?'Copertina presa dall’EPUB':'Copertina trovata su '+src):'Nessuna copertina trovata: ne riproverò più tardi');render()}
+    catch(e){toast('Libro aggiunto, copertina non salvata: '+e.message)}
   }catch(e){toast('Errore con «'+f.name+'»: '+e.message)}
 }
 $('#file').onchange=async e=>{for(const f of e.target.files)await addFile(f);e.target.value='';render()};
 /* ---------- UI ---------- */
 const hue=s=>{let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return h};
-const cover=(b,x='')=>{const h=hue(b.title);return `<div class="cv ${x}" style="background:linear-gradient(145deg,hsl(${h} 60% 42%),hsl(${(h+40)%360} 65% 26%))"><b>${esc(b.title)}</b><i>${esc(b.author||'')}</i></div>`};
+const covers={};   /* id libro → indirizzo locale della copertina */
+const cover=(b,x='')=>{const h=hue(b.title),bg=`linear-gradient(145deg,hsl(${h} 60% 42%),hsl(${(h+40)%360} 65% 26%))`;
+  if(covers[b.id])return `<div class="cv ${x}" style="background:${bg};padding:0"><img class="cvi" src="${covers[b.id]}" alt="${esc(b.title)}"></div>`;
+  return `<div class="cv ${x}" style="background:${bg}"><b>${esc(b.title)}</b><i>${esc(b.author||'')}</i></div>`};
 const card=(b,d)=>`<div class="card" data-id="${b.id}">${cover(b)}<p>${esc(b.title)}</p><small>${esc(b.author||'Autore sconosciuto')}</small>${d?'<button class="del" data-del="'+b.id+'">×</button>':''}</div>`;
 const emptyBox=`<div class="empty"><b>La tua libreria è vuota</b>Tocca «Aggiungi libri» e carica file EPUB, TXT, HTML o Markdown.<br>Compariranno qui e potrai ascoltarli subito.</div>`;
 function render(){
@@ -244,6 +260,7 @@ $('#vo').onclick=()=>{loadVoices();const cv=pickVoice();
   $('#sheet').onclick=e=>{const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si)}}};
 (async()=>{await sbReady();books=SBTG.cached();render();try{books=await SBTG.list()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}render()})();
 $('#tgout').onclick=async()=>{await sbReady();SBTG.menu()};
+let rt=0;addEventListener('sbtg-cover',e=>{covers[e.detail.id]=e.detail.url;clearTimeout(rt);rt=setTimeout(()=>{render();if(cur&&$('#pcv')&&covers[cur.id]){$('#pcv').innerHTML=cover(cur);$('#mcv').innerHTML=cover(cur)}},150)});
 addEventListener('sbtg-catalog',e=>{const old=new Map(books.map(b=>[b.id,b]));books=e.detail.map(b=>{const o=old.get(b.id);return o&&o.chapters?{...b,chapters:o.chapters}:b});render()});
 </script>
 <script type="module" src="./storage.js"></script>
