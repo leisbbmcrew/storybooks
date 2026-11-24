@@ -56,7 +56,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 .toast{position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;z-index:50;display:none;font-size:13px}
 </style></head>
 <body>
-<div class="top"><div class="logo">storybooks</div><label class="add">+ Aggiungi libri<input id="file" type="file" multiple accept=".epub,.txt,.md,.html,.htm" hidden></label></div>
+<div class="top"><div class="logo">storybooks</div><div style="display:flex;align-items:center;gap:12px"><label class="add">+ Aggiungi libri<input id="file" type="file" multiple accept=".epub,.txt,.md,.html,.htm" hidden></label><button id="tgout" title="Scollega Telegram da questo dispositivo" style="font-size:12px;color:var(--mut)">Esci</button></div></div>
 <main id="main"></main>
 <div class="mini" id="mini"><div id="mcv" style="width:42px"></div><div class="t" id="mt"><b></b><small></small></div><button id="mplay">▶</button></div>
 <nav><button data-v="home" class="on"><span>⌂</span>Home</button><button data-v="search"><span>⌕</span>Cerca</button><button data-v="lib"><span>▤</span>Libreria</button></nav>
@@ -75,14 +75,13 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){}return null}
 let books=[],db=null,cur=null,segs=[],si=0,ci=0,playing=false,tok=0,speed=+(ls('sb_speed')||1),voiceName=ls('sb_voice')||'',sleepT=null,sleepI=0,view='home',voices=[];
 /* ---------- storage ---------- */
-const api=async(p,o={})=>{const r=await fetch('/api'+p,{...o,headers:{'x-app-password':ls('sb_pw')||'',...(o.headers||{})}});
-  if(r.status===401){const pw=prompt('Password dell’app');if(pw){ls('sb_pw',pw);return api(p,o)}throw new Error('non autorizzato')}
-  if(!r.ok){let m=r.status;try{m=(await r.json()).error||m}catch(e){}throw new Error(m)}return r};
-const dbPut=b=>api('/books',{method:'POST',headers:{'content-type':'application/json','x-meta':encodeURIComponent(JSON.stringify({id:b.id,title:b.title.slice(0,200),author:(b.author||'').slice(0,120),added:b.added}))},body:JSON.stringify({title:b.title,author:b.author,chapters:b.chapters})});
-const dbDel=id=>api('/books/'+id,{method:'DELETE'});
+const sbReady=()=>window.SBTG?Promise.resolve():new Promise(r=>addEventListener('sbtg-load',r,{once:true}));
+const dbPut=async b=>{await sbReady();return SBTG.put(b,p=>toast('Carico «'+b.title+'»… '+Math.round(p*100)+'%'))};
+const dbGet=async id=>{await sbReady();return SBTG.get(id)};
+const dbDel=async id=>{await sbReady();return SBTG.del(id)};
 const prog=id=>{try{return JSON.parse(ls('sb_p_'+id))||{}}catch(e){return{}}};
 function save(){if(cur)ls('sb_p_'+cur.id,JSON.stringify({ch:ci,si,pc:(ci+si/Math.max(1,segs.length))/cur.chapters.length}))}
-function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',2600)}
+function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',Math.max(2600,t.length*55))}
 /* ---------- import ---------- */
 const norm=s=>s.replace(/\s+/g,' ').trim();
 function chunkText(txt){
@@ -208,7 +207,7 @@ function loadCh(i,s){ci=i;segs=buildSegs(cur.chapters[i]);si=Math.max(0,Math.min
 function jump(i,s){const was=playing;tok++;try{speechSynthesis.cancel()}catch(e){}loadCh(i,s);save();was?play():ui()}
 async function openBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
-  if(!b.chapters){toast('Scarico il libro…');try{b.chapters=(await(await api('/books/'+id)).json()).chapters}catch(e){return toast('Errore di download: '+e.message)}}
+  if(!b.chapters){toast('Scarico il libro…');try{b.chapters=(await dbGet(id)).chapters}catch(e){return toast('Errore di download: '+e.message)}}
   if(cur&&cur.id!==id){pause()}
   if(!cur||cur.id!==id){cur=b;const p=prog(id);loadCh(Math.min(p.ch||0,b.chapters.length-1),p.si||0);ls('sb_last',id)}
   $('#pl').classList.add('open');play();
@@ -242,6 +241,8 @@ $('#chs').onclick=()=>{sheet('<h3>Capitoli</h3>'+cur.chapters.map((c,i)=>`<butto
 $('#vo').onclick=()=>{loadVoices();const cv=pickVoice();
   sheet('<h3>Voce di lettura</h3>'+(voices.length?voices.map(v=>`<button class="it ${cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}</button>`).join('')+'<p style="color:var(--mut);font-size:12px">Le voci «Natural», «Neural» o «Premium» del tuo dispositivo rendono intonazione e pause in modo molto più naturale.</p>':'<p>Nessuna voce italiana trovata sul dispositivo. Installane una dalle impostazioni di sistema (Voce / Accessibilità).</p>'));
   $('#sheet').onclick=e=>{const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si)}}};
-(async()=>{try{books=await(await api('/books')).json()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}render()})();
+(async()=>{await sbReady();books=SBTG.cached();render();try{books=await SBTG.list()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}render()})();
+$('#tgout').onclick=async()=>{if(confirm('Scollegare Telegram da questo dispositivo?')){await sbReady();SBTG.logout()}};
 </script>
+<script type="module" src="./storage.js"></script>
 </body></html>
