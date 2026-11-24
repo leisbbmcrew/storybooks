@@ -52,7 +52,7 @@ const dettagli=e=>[shimError&&('Buffer: '+shimError),libSource&&('Libreria: '+li
 /* ---------- accesso (una volta per dispositivo; la sessione resta nel browser) ---------- */
 async function accessoTelegram(){
   const ui={
-    phone:async()=>(await ask('Collega Telegram','Inserisci il numero, con prefisso (es. +39…), dell’account Telegram che è proprietario o amministratore del canale «'+TG_CHANNEL+'».',[{type:'tel',ph:'+39…',ac:'tel'}]))[0],
+    phone:async()=>(await ask('Collega Telegram','Inserisci il numero, con prefisso (es. +39…), dell’account Telegram che è proprietario o amministratore del gruppo «'+TG_CHANNEL+'».',[{type:'tel',ph:'+39…',ac:'tel'}]))[0],
     code:async()=>{const r=await ask('Codice Telegram','Il codice arriva nell’app Telegram (chat «Telegram») se l’account è già aperto su un altro dispositivo, altrimenti via SMS.',[{ph:'Codice',ac:'one-time-code'}],{sms:true});return r==='__SMS__'?r:r[0].trim()},
     password:async()=>(await ask('Password Telegram','Inserisci la password a due fattori di Telegram.',[{type:'password',ph:'Password'}]))[0],
     info:setInfo
@@ -129,9 +129,9 @@ async function list(){
 async function get(id,onProgress){
   return run(async c=>{
     if(!idx.has(id))await _list(c);
-    const mid=idx.get(id);if(!mid)throw new Error('Libro non trovato nel canale');
+    const mid=idx.get(id);if(!mid)throw new Error('Libro non trovato nel gruppo');
     const [m]=await c.client.getMessages(c.ent,{ids:[mid]});
-    if(!m)throw new Error('Libro non trovato nel canale');
+    if(!m)throw new Error('Libro non trovato nel gruppo');
     const buf=await withTimeout(c.client.downloadMedia(m,{progressCallback:onProgress}),300000,'TIMEOUT_DOWNLOAD');
     return JSON.parse(new TextDecoder().decode(buf));
   });

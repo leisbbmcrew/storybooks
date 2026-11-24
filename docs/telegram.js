@@ -117,11 +117,18 @@ export function tgReset(){
   const c=cache;cache=null;ent=null;
   if(c)c.then(r=>{try{const p=r.client.disconnect();if(p&&p.catch)p.catch(()=>{})}catch(e){}},()=>{})}
 const norm=s=>String(s||'').trim().toLowerCase();
-/* Il canale si trova per nome (o per ID numerico, se scritto in TG_CHANNEL) tra le chat dell'account */
+/* Il gruppo o canale si trova per nome (o per ID numerico, se scritto in TG_CHANNEL) tra le chat dell'account */
 export async function findDialog(client,name){
-  const n=norm(name).replace(/^@/,''),num=n.replace(/^-100/,'');
-  const ds=await withTimeout(client.getDialogs({limit:400}),30000,'TIMEOUT_DIALOGS');
-  const d=ds.find(x=>norm(x.title)===n||(x.entity&&x.entity.username&&norm(x.entity.username)===n)||String(x.id)===n||(x.entity&&String(x.entity.id)===num));
+  const n=norm(name).replace(/^@/,'').replace(/\s+/g,' '),num=n.replace(/^-100/,'');
+  const tit=x=>norm(x.title).replace(/\s+/g,' ');
+  /* chat principali + archiviate (un gruppo archiviato non compare nell'elenco normale) */
+  const ds=[];
+  for(const folder of [0,1]){
+    try{ds.push(...await withTimeout(client.getDialogs({limit:600,...(folder?{folder}:{})}),30000,'TIMEOUT_DIALOGS'))}
+    catch(e){if(!folder)throw e}
+  }
+  let d=ds.find(x=>tit(x)===n||(x.entity&&x.entity.username&&norm(x.entity.username)===n)||String(x.id)===n||(x.entity&&String(x.entity.id)===num));
+  if(!d){const p=ds.filter(x=>tit(x).includes(n));if(p.length===1)d=p[0]}   /* nome quasi uguale: se ce n'è una sola, è quella */
   return {dialog:d||null,titles:ds.map(x=>x.title).filter(Boolean)};
 }
 let ent=null;
@@ -141,7 +148,7 @@ export function tgErrText(e){
   const m=(e&&e.message)||String(e);
   if(m==='NO_CONFIG')return 'Configurazione Telegram incompleta: scrivi api_id e api_hash in telegram-config.js.';
   if(m==='NO_SESSION')return 'Non hai effettuato l’accesso a Telegram.';
-  if(m==='NO_CHAT')return 'Canale «'+TG_CHANNEL+'» non trovato: il nome deve coincidere esattamente e l’account deve far parte del canale.'+(e.titles&&e.titles.length?' Chat trovate: '+e.titles.slice(0,12).join(', ')+'.':'');
+  if(m==='NO_CHAT')return 'Gruppo o canale «'+TG_CHANNEL+'» non trovato: il nome deve coincidere con quello su Telegram e l’account deve farne parte.'+(e.titles&&e.titles.length?' Chat trovate: '+e.titles.slice(0,12).join(', ')+'.':'');
   if(m==='LIB_LOAD')return 'Impossibile caricare la libreria Telegram (telegram-lib.js). '+((e.details||[]).join(' | '));
   if(/^TIMEOUT/.test(m))return 'Telegram non risponde (timeout). Controlla la connessione, o che la rete non blocchi i WebSocket verso Telegram.';
   if(/API_ID_INVALID/.test(m))return 'api_id o api_hash non validi: ricontrolla i valori su my.telegram.org.';
@@ -151,7 +158,7 @@ export function tgErrText(e){
   if(/PHONE_CODE_EXPIRED/.test(m))return 'Codice scaduto: riprova l’accesso.';
   if(/PASSWORD_HASH_INVALID/.test(m))return 'Password a due fattori errata.';
   if(/FLOOD/.test(m))return 'Troppi tentativi: Telegram chiede di attendere ('+m+').';
-  if(/CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN|CHANNEL_PRIVATE/.test(m))return 'L’account non ha i permessi sul canale: deve esserne proprietario o amministratore. ('+m+')';
+  if(/CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN|CHANNEL_PRIVATE/.test(m))return 'L’account non ha i permessi sul gruppo: deve esserne proprietario o amministratore. ('+m+')';
   return m;
 }
 /* Invio di un file nel canale (stessa tecnica di carmamedical: il File del browser con una "read" fittizia). */
