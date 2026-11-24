@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Storybooks · Diagnostica</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+body{font:15px/1.45 system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:16px;max-width:760px;margin-inline:auto}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px}
+p.s{color:#999;margin:0 0 14px}
+button,input[type=file]{font:inherit}
+button{background:#ff6a1f;color:#fff;border:0;border-radius:8px;padding:9px 14px;cursor:pointer;margin:4px 6px 4px 0}
+button.g{background:#333}
+input[type=password]{font:inherit;padding:8px;border-radius:8px;border:1px solid #444;background:#1c1c1c;color:#eee;width:220px}
+#log{margin-top:10px}
+.r{display:flex;gap:8px;padding:7px 9px;border-radius:8px;background:#1b1b1b;margin:4px 0;align-items:flex-start}
+.r b{min-width:18px}.ok b{color:#4cd964}.ko{background:#3a1717}.ko b{color:#ff5a5a}.run b{color:#ffcc00}.inf b{color:#8ab4ff}
+.t{flex:1}.m{color:#999;font-size:12px;white-space:nowrap}
+.d{color:#bbb;font-size:13px;word-break:break-word}
+</style></head><body>
+<h1>Diagnostica Storybooks</h1>
+<p class="s">Mostra passo per passo cosa succede e dove si ferma. La prova di caricamento è simulata: non aggiunge nulla alla libreria.</p>
+
+<div>Password dell’app: <input type="password" id="pw" autocomplete="off"> <button class="g" id="savepw">Salva</button></div>
+
+<h2>1 · Server e Telegram</h2>
+<button id="b1">Controlla Worker e canale</button>
+
+<h2>2 · Prova di caricamento di un libro</h2>
+<input type="file" id="f" accept=".epub,.txt,.html,.htm,.md"> <button id="b2">Avvia prova</button>
+
+<div id="log"></div>
+<p><button class="g" id="copy">Copia report</button> <button class="g" id="clear">Pulisci</button></p>
+
+<script>
+const $=s=>document.querySelector(s);
+const logEl=$('#log');let lines=[];
+const ls=(k,v)=>{try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){}return null};
+$('#pw').value=ls('sb_pw')||'';
+$('#savepw').onclick=()=>{ls('sb_pw',$('#pw').value.trim());add('i','Password salvata nel browser')};
+const fmt=ms=>ms<1000?ms+' ms':(ms/1000).toFixed(1)+' s';
+function add(kind,title,detail='',ms){
+  const el=document.createElement('div');el.className='r '+({o:'ok',k:'ko',r:'run',i:'inf'}[kind]||'');
+  el.innerHTML='<b>'+({o:'✔',k:'✖',r:'…',i:'ℹ'}[kind])+'</b><div class="t">'+esc(title)+(detail?'<div class="d">'+esc(detail)+'</div>':'')+'</div><div class="m">'+(ms!=null?fmt(ms):'')+'</div>';
+  logEl.appendChild(el);lines.push((({o:'OK',k:'ERRORE',r:'IN CORSO',i:'INFO'})[kind])+' | '+title+(detail?' | '+detail:'')+(ms!=null?' | '+fmt(ms):''));
+  return el;
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function setEl(el,kind,title,detail,ms){el.className='r '+({o:'ok',k:'ko'}[kind]);el.innerHTML='<b>'+({o:'✔',k:'✖'}[kind])+'</b><div class="t">'+esc(title)+(detail?'<div class="d">'+esc(detail)+'</div>':'')+'</div><div class="m">'+fmt(ms)+'</div>';lines.push((kind==='o'?'OK':'ERRORE')+' | '+title+(detail?' | '+detail:'')+' | '+fmt(ms))}
+// passo con cronometro "vivo": se resta fermo vedi quanti secondi sono passati
+async function step(title,fn){
+  const el=add('r',title,'in corso… 0 s');const t=Date.now();
+  const iv=setInterval(()=>{el.querySelector('.d')&&(el.querySelector('.d').textContent='in corso… '+Math.round((Date.now()-t)/1000)+' s')},500);
+  if(!el.querySelector('.d')){const d=document.createElement('div');d.className='d';el.querySelector('.t').appendChild(d)}
+  lines.pop();
+  try{const d=await fn();clearInterval(iv);setEl(el,'o',title,d||'',Date.now()-t);return{ok:true,v:d}}
+  catch(e){clearInterval(iv);setEl(el,'k',title,e.message||String(e),Date.now()-t);return{ok:false}}
+}
+function showServerLog(log){for(const l of log)add(l.ok?'o':'k',l.step,l.detail,l.ms)}
+async function callDiag(method,body){
+  const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),150000);
+  let r;
+  try{r=await fetch('/api/diag',{method,body,signal:ctl.signal,headers:{'x-app-password':($('#pw').value||ls('sb_pw')||'').trim(),...(body?{'content-type':'application/json'}:{})}})}
+  catch(e){throw new Error(e.name==='AbortError'?'nessuna risposta dopo 150 s (il Worker non risponde)':'richiesta non riuscita: '+e.message)}
+  finally{clearTimeout(to)}
+  const txt=await r.text();let j=null;try{j=JSON.parse(txt)}catch(e){}
+  if(r.status===401)throw new Error('password errata (HTTP 401): scrivila sopra e premi Salva');
+  if(!j)throw new Error('risposta non valida dal Worker (HTTP '+r.status+'): '+txt.replace(/\s+/g,' ').slice(0,200));
+  if(j.error)throw new Error('HTTP '+r.status+': '+j.error);
+  return j;
+}
+$('#b1').onclick=async()=>{
+  add('i','— Prova 1: Worker e Telegram —');
+  let j;const r=await step('Il Worker risponde',async()=>{j=await callDiag('GET');return'ok (HTTP 200)'});
+  if(r.ok)showServerLog(j.log);
+};
+$('#b2').onclick=async()=>{
+  const f=$('#f').files[0];if(!f)return add('k','Scegli prima un file');
+  add('i','— Prova 2: caricamento di «'+f.name+'» —');
+  const ext=f.name.split('.').pop().toLowerCase(),base=f.name.replace(/\.[^.]+$/,'');
+  await step('Il browser legge il file',async()=>(f.size/1e6).toFixed(2)+' MB');
+  await step('Libreria JSZip caricata',async()=>{if(ext==='epub'&&typeof JSZip==='undefined')throw new Error('JSZip non si è caricato (blocco rete/adblock?): impossibile leggere gli EPUB');return typeof JSZip==='undefined'?'non serve per questo formato':'ok'});
+  let b;
+  const p=await step('Estrazione del testo',async()=>{
+    if(ext==='epub')b=await parseEpub(f);
+    else{let t=await f.text();if(ext==='html'||ext==='htm'){const d=new DOMParser().parseFromString(t,'text/html');t=[...d.querySelectorAll('p,h1,h2,h3,li')].map(e=>e.textContent).join('\n')}b={title:base,author:'',chapters:chunkText(t)}}
+    if(!b.chapters.length)throw new Error('nessun capitolo trovato (libro vuoto o formato non riconosciuto)');
+    const chars=b.chapters.reduce((a,c)=>a+c.p.join('').length,0);
+    return b.chapters.length+' capitoli, '+(chars/1e3).toFixed(0)+' mila caratteri · titolo «'+(b.title||base)+'» · autore «'+(b.author||'—')+'»';
+  });
+  if(!p.ok)return;
+  let body;
+  const q=await step('Creazione del pacchetto da inviare',async()=>{
+    body=JSON.stringify({title:b.title||base,author:b.author,chapters:b.chapters});
+    const mb=new Blob([body]).size/1e6;
+    if(mb>19)throw new Error(mb.toFixed(1)+' MB: supera il limite di ~19 MB di Telegram');
+    return mb.toFixed(2)+' MB (limite ~19 MB)';
+  });
+  if(!q.ok)return;
+  let j;
+  const s=await step('Invio al Worker e prova su Telegram',async()=>{j=await callDiag('POST',body);return'risposta ricevuta'});
+  if(s.ok){showServerLog(j.log);
+    const bad=j.log.find(l=>!l.ok);
+    add(bad?'k':'o',bad?'Il blocco è qui: '+bad.step:'Tutti i passaggi riusciti','Se qui è tutto verde ma l’app non carica, il problema è nell’app (index.html) o nel passaggio finale catalogo/fissaggio.');
+  }
+};
+$('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(lines.join('\n'));add('i','Report copiato')}catch(e){add('k','Copia non riuscita','seleziona il testo a mano')}};
+$('#clear').onclick=()=>{logEl.innerHTML='';lines=[]};
+window.addEventListener('error',e=>add('k','Errore nella pagina',e.message));
+window.addEventListener('unhandledrejection',e=>add('k','Errore non gestito',(e.reason&&e.reason.message)||String(e.reason)));
+/* --- stesse funzioni di lettura usate dall'app --- */
+const norm=s=>s.replace(/\s+/g,' ').trim();
+function chunkText(txt){
+  const ps=txt.replace(/\r/g,'').split(/\n+/).map(norm).filter(Boolean),chs=[];let c={t:'Parte 1',p:[]},n=0;
+  const push=()=>{if(c.p.length)chs.push(c)};
+  for(const p of ps){
+    const isH=/^(capitolo|chapter|parte|libro)\b/i.test(p)&&p.length<70;
+    if(isH||n>6000){if(c.p.length>(isH?0:0)){push();c={t:isH?p:'Parte '+(chs.length+1),p:[],};n=0}else if(isH)c.t=p}
+    c.p.push(p);n+=p.length;
+  }
+  push();return chs;
+}
+async function parseEpub(f){
+  const z=await JSZip.loadAsync(f),dp=new DOMParser(),rd=async p=>{const e=z.file(p);return e?e.async('string'):''};
+  const cont=dp.parseFromString(await rd('META-INF/container.xml'),'application/xml');
+  const opfP=cont.querySelector('rootfile').getAttribute('full-path'),dir=opfP.replace(/[^/]*$/,'');
+  const opf=dp.parseFromString(await rd(opfP),'application/xml');
+  const g=t=>{const e=opf.getElementsByTagName(t)[0];return e?norm(e.textContent):''};
+  const man={};[...opf.getElementsByTagName('item')].forEach(i=>man[i.getAttribute('id')]=i.getAttribute('href'));
+  const chs=[];let k=0;
+  for(const r of opf.getElementsByTagName('itemref')){
+    const h=man[r.getAttribute('idref')];if(!h)continue;
+    const parts=(dir+decodeURIComponent(h.split('#')[0])).split('/'),path=[];
+    parts.forEach(x=>x==='..'?path.pop():x!=='.'&&path.push(x));
+    const d=dp.parseFromString(await rd(path.join('/')),'text/html');
+    d.querySelectorAll('script,style,sup.noteref').forEach(e=>e.remove());
+    const ps=[...d.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li')].map(e=>norm(e.textContent)).filter(Boolean);
+    if(ps.join(' ').length<150)continue;
+    const hd=d.querySelector('h1,h2,h3');k++;
+    chs.push({t:hd?norm(hd.textContent).slice(0,70):'Capitolo '+k,p:ps});
+  }
+  return{title:g('dc:title'),author:g('dc:creator'),chapters:chs};
+}
+
+</script></body></html>
