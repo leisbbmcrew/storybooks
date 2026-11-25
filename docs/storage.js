@@ -180,7 +180,28 @@ async function _list({client,ent}){
     out.push({id,title:e.title||id,author:e.author,added:(m.date||0)*1000,msg:m.id,cover:covs.get(id)||0,audio:auds.get(id)||null,genres:e.genres,minutes:e.minutes,synopsis:e.synopsis});
     idx.set(id,m.id);if(covs.get(id))covIdx.set(id,covs.get(id));if(auds.get(id))audIdx.set(id,auds.get(id));
   }
-  saveCache(out);annuncia(out);queueMicrotask(()=>sweep(out));return out;
+  const ml=metaLocalGet();
+  for(const e of out){                                    /* scheda salvata qui ma non (ancora) nella didascalia su Telegram */
+    const l=ml[e.id];if(!l)continue;
+    if(!(e.genres&&e.genres.length)&&l.genres&&l.genres.length)e.genres=l.genres;
+    if(!e.minutes&&l.minutes)e.minutes=l.minutes;
+    if(l.synopsis&&(!e.synopsis||(!isItalian(e.synopsis)&&isItalian(l.synopsis))))e.synopsis=l.synopsis;
+  }
+  saveCache(out);annuncia(out);queueMicrotask(()=>{heal(out);sweep(out)});return out;
+}
+const healed=new Set();
+/* riscrive nella didascalia le schede che esistono solo sul dispositivo (una prova per libro a ogni avvio) */
+async function heal(list){
+  const ml=metaLocalGet();
+  for(const e of list.slice(0,40)){
+    const l=ml[e.id];if(!l||healed.has(e.id))continue;
+    healed.add(e.id);
+    try{
+      const [m]=await run(c=>c.client.getMessages(c.ent,{ids:[e.msg]}));
+      const c=parseCap(m&&m.message);
+      if((l.synopsis&&c.synopsis!==e.synopsis)||(e.genres.length&&!c.genres.length)||(e.minutes&&!c.minutes))await editCaption(e.id,e);
+    }catch(err){}
+  }
 }
 async function list(){
   for(;;){
@@ -313,11 +334,11 @@ async function daOpenLibrary(title,author){
 /* ---------- scheda del libro: genere, trama (durata: calcolata dal testo) ---------- */
 /*META-START*/
 const GEN=[[/science fiction|sci-fi|fantascienza/i,'Fantascienza'],[/thriller|suspense/i,'Thriller'],[/mystery|detective|crime|giallo|noir/i,'Giallo'],[/romance|love stor/i,'Romance'],[/fantasy/i,'Fantasy'],[/horror/i,'Horror'],
- [/biograph|memoir|autobiograph/i,'Biografia'],[/histor|storia/i,'Storia'],[/psycholog/i,'Psicologia'],[/philosoph|filosofia/i,'Filosofia'],[/self-help|self help|personal growth|personal development/i,'Crescita personale'],
+ [/biograph|memoir|autobiograph/i,'Biografia'],[/histor|storia|storic/i,'Storia'],[/psycholog/i,'Psicologia'],[/philosoph|filosofia/i,'Filosofia'],[/self-help|self help|personal growth|personal development/i,'Crescita personale'],
  [/business|econom|financ|management/i,'Economia'],[/religio|spiritual|christian|bible/i,'Spiritualità'],[/poetry|poem|poesia/i,'Poesia'],[/drama|theat|\bplays?\b/i,'Teatro'],[/juvenile|young adult|children|ragazzi/i,'Ragazzi'],
  [/cook|food|cucina/i,'Cucina'],[/science|nature|mathemat/i,'Scienza'],[/health|fitness|medical/i,'Salute'],[/travel|viaggi/i,'Viaggi'],[/\bart\b|design|photograph/i,'Arte'],[/humor|comedy|umorismo/i,'Umorismo'],
  [/comic|graphic novel|fumetti/i,'Fumetti'],[/classic/i,'Classici'],[/literary|literature|essays|saggi/i,'Letteratura'],[/adventure|avventura/i,'Avventura'],[/\bwar\b|military/i,'Guerra'],
- [/politic|social science|sociolog/i,'Società e politica'],[/education|teaching/i,'Istruzione'],[/fiction|novel|stories|narrativa/i,'Narrativa']];
+ [/politic|social science|sociolog/i,'Società e politica'],[/education|teaching/i,'Istruzione'],[/fiction|novel|stories|narrativa|romanzo|racconto/i,'Narrativa']];
 /* "Fiction / Thrillers / Suspense" → ['Thriller','Narrativa']; onlyKnown scarta le etichette che non conosciamo */
 function itGenres(raw,onlyKnown){
   const out=[];
@@ -364,45 +385,114 @@ async function metaOpenLibrary(title,author){
   if(d.key){const w=await getJSON('https://openlibrary.org'+d.key+'.json'),t=typeof w.description==='string'?w.description:w.description&&w.description.value;if(t)out.synopsis=pulisciTrama(t)}
   return out;
 }
-/* → {genres:[…], synopsis:'…'}: Google Books, poi Open Library per ciò che manca */
-async function cercaMeta(title,author,lang){
-  const m={genres:[],synopsis:''};
-  try{
-    for(const v of await googleCandidates(one(title),one(author),lang)){
-      if(!m.genres.length&&v.categories)m.genres=itGenres(v.categories);
-      if(!m.synopsis&&v.description){const t=pulisciTrama(v.description);if(t.length>=60)m.synopsis=t}
-      if(m.genres.length&&m.synopsis)break;
-    }
-  }catch(e){console.warn('Scheda Google Books: '+((e&&e.message)||e))}
-  if(!m.genres.length||!m.synopsis){
-    try{const o=await metaOpenLibrary(one(title),one(author));if(!m.genres.length)m.genres=o.genres;if(!m.synopsis)m.synopsis=o.synopsis}
-    catch(e){console.warn('Scheda Open Library: '+((e&&e.message)||e))}
+/*IT-START*/
+/* il testo è italiano? (parole funzionali italiane contro inglesi) */
+function isItalian(t){
+  t=String(t||'').toLowerCase();
+  const it=(t.match(/\b(il|lo|la|gli|le|di|del|della|dei|che|non|per|con|una|un|sono|era|nel|nella|più|anche|come|alla|dal|ha|si)\b/g)||[]).length;
+  const en=(t.match(/\b(the|and|of|to|was|that|with|for|his|her|is|are|in|on|as|by|an|from|who|which)\b/g)||[]).length;
+  return it>en&&it>=3;
+}
+/* Wikipedia in italiano: prima la sezione «Trama», altrimenti l'introduzione. Controlli per non prendere una pagina sbagliata. */
+async function wikiIt(title,author){
+  const api='https://it.wikipedia.org/w/api.php?format=json&origin=*&';
+  const clean=t=>String(t).replace(/\s*\(.*?\)\s*/g,' ').trim();
+  const sur=toks(author).slice(-1)[0];
+  const j=await getJSON(api+'action=query&list=search&srlimit=4&srsearch='+enc((title+' '+author).trim()));
+  for(const h of (j.query&&j.query.search)||[]){
+    if(simil(title,clean(h.title))<.6)continue;
+    const p=await getJSON(api+'action=query&prop=extracts&exintro=1&explaintext=1&redirects=1&titles='+enc(h.title));
+    const pg=Object.values((p.query&&p.query.pages)||{})[0],intro=pulisciTrama((pg&&pg.extract)||'');
+    if(intro.length<120||/può riferirsi|può significare|pagina di disambiguazione/i.test(intro))continue;
+    if(!/\b(romanzo|libro|saggio|opera|racconto|raccolta|poema|trattato|autobiograf\w*|memorie|fiaba|testo|trilogia)\b/i.test(intro))continue;
+    if(sur&&!toks(intro).includes(sur))continue;                 /* l'autore deve comparire nell'introduzione */
+    let plot='';
+    try{
+      const sec=await getJSON(api+'action=parse&prop=sections&page='+enc(h.title)+'&redirects=1');
+      const sx=((sec.parse&&sec.parse.sections)||[]).find(x=>/^(trama|sinossi|riassunto|argomento)$/i.test(String(x.line).replace(/<[^>]+>/g,'').trim()));
+      if(sx){
+        const sp=await getJSON(api+'action=parse&prop=text&section='+sx.index+'&page='+enc(h.title)+'&redirects=1');
+        plot=pulisciTrama(((sp.parse&&sp.parse.text&&sp.parse.text['*'])||'').replace(/<sup[^>]*>.*?<\/sup>/g,'').replace(/<style[^>]*>.*?<\/style>/g,'')).replace(/\[\s*modifica[^\]]*\]/gi,'').replace(/\[\d+\]/g,'').trim();
+      }
+    }catch(e){}
+    const first=intro.split(/(?<=\.)\s/)[0]||'';
+    const gm=first.match(/\b(?:è|fu)\s+(?:un|una|il|la|l')\s*([^,.;]{3,70})/i);
+    return {synopsis:plot.length>=120?plot:intro,genres:gm?itGenres([gm[1]],true):[]};
   }
-  m.synopsis=cutTrama(m.synopsis,560);
+  return null;
+}
+/* traduzione automatica in italiano (MyMemory, gratuito, a pezzi da ~450 caratteri): ultimo ripiego */
+async function traduci(text,from){
+  const parts=[];let cur='';
+  for(const f of String(text).split(/(?<=[.!?])\s+/)){if(cur&&(cur+' '+f).length>450){parts.push(cur);cur=''}cur=cur?cur+' '+f:f}
+  if(cur)parts.push(cur);
+  const out=[];
+  for(const p of parts.slice(0,4)){
+    const j=await getJSON('https://api.mymemory.translated.net/get?langpair='+enc((from||'en')+'|it')+'&q='+enc(p));
+    const t=j&&j.responseData&&j.responseData.translatedText;
+    if(!t||/MYMEMORY WARNING|INVALID|QUERY LENGTH/i.test(t))throw new Error('traduzione non disponibile');
+    out.push(t);
+  }
+  return out.join(' ');
+}
+/*IT-END*/
+/* → {genres, synopsis, err}. La trama è sempre in italiano (a meno che il libro sia in inglese):
+   1) Google Books in italiano  2) Wikipedia in italiano  3) altra lingua, tradotta */
+async function cercaMeta(title,author,lang){
+  const want=lang==='en'?'en':'it',m={genres:[],synopsis:'',err:false};
+  const warn=(n,e)=>{m.err=true;console.warn('Scheda '+n+': '+((e&&e.message)||e))};
+  const okLang=t=>want==='en'||isItalian(t);
+  let cand=[];
+  try{cand=await googleCandidates(one(title),one(author),want)}catch(e){warn('Google Books',e)}
+  for(const v of cand)if(!m.genres.length&&v.categories)m.genres=itGenres(v.categories);
+  const descs=cand.filter(v=>v.description).map(v=>({t:pulisciTrama(v.description),l:v.language||'en'})).filter(d=>d.t.length>=60);
+  let syn=(descs.find(d=>okLang(d.t))||{}).t||'',foreign=descs.find(d=>!okLang(d.t));
+  if(!syn&&want==='it'){
+    try{const w=await wikiIt(one(title),one(author));if(w){syn=w.synopsis;if(!m.genres.length)m.genres=w.genres}}catch(e){warn('Wikipedia',e)}
+  }
+  if(!syn||!m.genres.length){
+    try{
+      const o=await metaOpenLibrary(one(title),one(author));
+      if(!m.genres.length)m.genres=o.genres;
+      if(!syn&&o.synopsis){if(okLang(o.synopsis))syn=o.synopsis;else if(!foreign)foreign={t:o.synopsis,l:'en'}}
+    }catch(e){warn('Open Library',e)}
+  }
+  if(!syn&&foreign&&want==='it'){
+    try{syn=await traduci(cutTrama(foreign.t,500),foreign.l)}catch(e){warn('traduzione',e)}
+    if(syn&&!isItalian(syn))syn='';                                /* se non è venuta italiana, meglio nulla che inglese */
+  }
+  m.synopsis=cutTrama(syn,560);
   return m;
 }
-/* salva genere/durata/trama: nel catalogo locale e nella didascalia del messaggio su Telegram (così li ritrovi su ogni dispositivo) */
+/* ---- salvataggio: catalogo locale, archivio locale delle schede e didascalia su Telegram ---- */
+let metaErr='';
+const metaLocalGet=()=>{try{return JSON.parse(localStorage.getItem('sb_meta')||'{}')}catch(e){return{}}};
+function metaLocalSet(id,e){const o=metaLocalGet();o[id]={genres:e.genres||[],minutes:e.minutes||0,synopsis:e.synopsis||''};try{localStorage.setItem('sb_meta',JSON.stringify(o))}catch(x){}}
+async function editCaption(id,e){
+  const mid=idx.get(id)||e.msg;
+  if(!mid||!hasSession()||!tgConfigured())return;
+  try{await run(async({client,ent})=>{await client.editMessage(ent,{message:mid,text:buildCap(e)})});metaErr=''}
+  catch(err){metaErr=(tgErrText(err)||'').slice(0,160);console.warn('Scheda non salvata su Telegram: '+((err&&err.message)||err))}
+}
 async function setMeta(id,p){
   const cur=readCache().find(x=>x.id===id);if(!cur)return;
   const e={...cur,...p},l=readCache().map(x=>x.id===id?e:x);
-  saveCache(l);annuncia(l);
-  const mid=idx.get(id)||cur.msg;
-  if(!mid||!hasSession()||!tgConfigured())return;
-  try{await run(async({client,ent})=>{await client.editMessage(ent,{message:mid,text:buildCap(e)})})}
-  catch(err){console.warn('Scheda non salvata su Telegram: '+((err&&err.message)||err))}
+  saveCache(l);metaLocalSet(id,e);annuncia(l);
+  await editCaption(id,e);
 }
 const triedMeta=()=>{try{return JSON.parse(localStorage.getItem('sb_meta_try')||'{}')}catch(e){return{}}};
-/* cerca genere e trama se mancano; con force lo fa anche se già provato di recente */
+/* cerca genere e trama se mancano (o se la trama non è in italiano); con force lo fa anche se già provato di recente */
 async function applicaMeta(b,force){
-  const e=readCache().find(x=>x.id===b.id)||b;
-  const manca=!(e.genres&&e.genres.length)||!e.synopsis;
-  if(!manca&&!force)return false;
+  const e=readCache().find(x=>x.id===b.id)||b,want=b.lang==='en'?'en':'it';
+  const synOk=!!e.synopsis&&(want==='en'||isItalian(e.synopsis));
+  if(!force&&(e.genres&&e.genres.length)&&synOk)return false;
   const tr=triedMeta(),now=Date.now();
   if(!force&&tr[b.id]&&now-tr[b.id]<3*864e5)return false;
-  tr[b.id]=now;try{localStorage.setItem('sb_meta_try',JSON.stringify(tr))}catch(x){}
-  const m=await cercaMeta(b.title,b.author,b.lang||'it'),p={};
+  const m=await cercaMeta(b.title,b.author,want),p={};
   if(!(e.genres&&e.genres.length)&&m.genres.length)p.genres=m.genres;
-  if(!e.synopsis&&m.synopsis)p.synopsis=m.synopsis;
+  if(m.synopsis&&!synOk)p.synopsis=m.synopsis;
+  tr[b.id]=(m.err&&!Object.keys(p).length)?now-3*864e5+36e5:now;   /* errore di rete: riprova tra 1 ora; altrimenti tra 3 giorni */
+  try{localStorage.setItem('sb_meta_try',JSON.stringify(tr))}catch(x){}
   if(!Object.keys(p).length)return false;
   await setMeta(b.id,p);return true;
 }
@@ -505,16 +595,17 @@ async function menu(){
   const nome=accountLabel();
   card.append(el('h2','Telegram','margin:0 0 8px;font-size:20px'),
     el('p',(s==='err'?LED.err[1]+'.':LED[s][1]+'.')+(nome?' Account: '+nome+'.':'')+' Gruppo: «'+TG_CHANNEL+'».','margin:0 0 12px;font-size:14px;line-height:1.45'));
+  if(metaErr)card.appendChild(el('p','Scheda dei libri non salvata su Telegram: '+metaErr,'margin:0 0 12px;font-size:12px;color:var(--mut,#6b6b6b)'));
   if(s==='err')card.appendChild(el('pre',lastErr,'font-size:12px;white-space:pre-wrap;color:var(--mut,#6b6b6b);margin:0 0 12px;max-height:160px;overflow:auto'));
   const b=el('button',s==='err'?'Riprova ora':'Aggiorna catalogo',BTN);
   b.onclick=async()=>{ov.remove();try{await listW()}catch(e){}};
-  const cm=el('button','Cerca le copertine mancanti',LINK);cm.onclick=()=>{ov.remove();cercaMancanti()};
+  const cm=el('button','Cerca copertine, trame e generi mancanti',LINK);cm.onclick=()=>{ov.remove();cercaMancanti()};
   const x=el('button','Esci da Telegram',LINK);
   x.onclick=()=>{if(confirm('Scollegare Telegram da questo dispositivo?'))logout()};
   const k=el('button','Chiudi',LINK);k.onclick=()=>ov.remove();
   card.append(b,cm,x,k);
 }
 
-window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),setMeta:wrap(setMeta),enrich:wrap(b=>applicaMeta(b,true)),putAudio:wrap(putAudio),getAudio:wrap(getAudio),hasAudioLocal,delAudio:wrap(delAudio),audioOf,logout,menu};
+window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),setMeta:wrap(setMeta),enrich:wrap(b=>applicaMeta(b,true)),isItalian,putAudio:wrap(putAudio),getAudio:wrap(getAudio),hasAudioLocal,delAudio:wrap(delAudio),audioOf,logout,menu};
 ledUpdate();
 window.dispatchEvent(new Event('sbtg-load'));

@@ -26,6 +26,8 @@ h2{font-size:18px;margin:22px 0 10px}
 .card p{margin:6px 0 0;font-weight:600;font-size:13px;line-height:1.2}.card small{color:var(--mut)}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:8px 0 2px;-webkit-overflow-scrolling:touch}.chips:empty{display:none}
 .chip{flex:none;border:1px solid var(--line);border-radius:16px;padding:6px 12px;font-size:13px;background:var(--card);color:var(--fg);white-space:nowrap}.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:14px;padding:4px 10px;font-size:12px;background:var(--card);color:var(--fg)}
+.sheet .chip.on{color:#fff;font-weight:400}
 .go{display:block;width:100%;margin-top:8px;padding:13px;border-radius:24px;background:var(--acc);color:#fff;font-weight:700;text-align:center}
 .mut{color:var(--mut)}
 .opt{position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;line-height:20px;font-size:16px}
@@ -260,11 +262,12 @@ function render(){
 function showBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   const pc=Math.round((prog(id).pc||0)*100);
-  const gen=(b.genres||[]).map(g=>`<span class="chip on" style="cursor:default">${esc(g)}</span>`).join('');
+  const gen=(b.genres||[]).map(g=>`<span class="tag">${esc(g)}</span>`).join('');
+  const itOk=!b.synopsis||b.lang==='en'||!(window.SBTG&&SBTG.isItalian)||SBTG.isItalian(b.synopsis);
   sheet(`<div style="display:flex;gap:14px;align-items:flex-start"><div style="width:110px;flex:none">${cover(b)}</div><div style="min-width:0"><h3 style="margin:0 0 4px">${esc(b.title)}</h3><div class="mut">${esc(b.author||'Autore sconosciuto')}</div>
     <div class="mut" style="margin:8px 0;font-size:13px">${b.minutes?'⏱ circa '+fmtDur(b.minutes)+' di ascolto':'⏱ durata non ancora calcolata'}${audCount(b.id)?' · 🎧 audio narrato':''}</div>
     <div class="chips" style="flex-wrap:wrap;overflow:visible">${gen}</div></div></div>
-    ${b.synopsis?`<p style="line-height:1.5;font-size:14px;margin:14px 0">${esc(b.synopsis)}</p>`:`<p class="mut" style="font-size:14px;margin:14px 0">Trama e genere non ancora trovati.</p><button class="it" data-a="info">🔎 Cerca trama e genere</button>`}
+    ${b.synopsis?`<p style="line-height:1.5;font-size:14px;margin:14px 0">${esc(b.synopsis)}</p>${itOk?'':'<button class="it" data-a="info">🔎 Cerca la trama in italiano</button>'}`:`<p class="mut" style="font-size:14px;margin:14px 0">Trama e genere non ancora trovati.</p><button class="it" data-a="info">🔎 Cerca trama e genere</button>`}
     <button class="go" data-a="play">${pc>0&&pc<98?'▶ Riprendi · '+pc+'%':'▶ Ascolta'}</button>`);
   $('#sheet').onclick=async e=>{
     const x=e.target.closest('[data-a]');if(!x)return;
