@@ -1,0 +1,43 @@
+name: Prepara Piper
+# Si lancia a mano una volta sola: GitHub → Actions → «Prepara Piper» → Run workflow.
+# Scarica i componenti della voce offline (ONNX Runtime e fonemizzatore) e li salva nel sito, nella cartella piper/.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  piper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Scarica i pacchetti
+        run: |
+          set -e
+          mkdir -p /tmp/p && cd /tmp/p
+          npm init -y >/dev/null
+          npm install onnxruntime-web@1.18.0 @diffusionstudio/piper-wasm@1.0.0 --no-audit --no-fund
+          echo "--- onnxruntime-web/dist"; ls -l node_modules/onnxruntime-web/dist
+          echo "--- piper-wasm/build"; ls -l node_modules/@diffusionstudio/piper-wasm/build
+      - name: Copia i file nel sito e salva
+        run: |
+          set -e
+          DEST=public; [ -f docs/index.html ] && DEST=docs
+          P=/tmp/p/node_modules
+          mkdir -p "$DEST/piper/ort"
+          for f in piper_phonemize.js piper_phonemize.wasm piper_phonemize.data; do cp "$P/@diffusionstudio/piper-wasm/build/$f" "$DEST/piper/$f"; done
+          cp "$P/onnxruntime-web/dist/ort.min.js" "$DEST/piper/ort/ort.min.js"
+          for f in "$P"/onnxruntime-web/dist/ort-wasm*.wasm "$P"/onnxruntime-web/dist/ort-wasm*.mjs; do
+            [ -f "$f" ] || continue
+            case "$f" in *jsep*|*webgpu*|*asyncify*) ;; *) cp "$f" "$DEST/piper/ort/" ;; esac
+          done
+          for f in piper_phonemize.js piper_phonemize.wasm piper_phonemize.data ort/ort.min.js; do
+            test -s "$DEST/piper/$f" || { echo "Manca $f"; exit 1; }
+          done
+          ls -lR "$DEST/piper"
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A "$DEST/piper"
+          if git diff --cached --quiet; then echo "Nessuna modifica"; else git commit -m "Aggiunge i componenti Piper" && git push; fi
