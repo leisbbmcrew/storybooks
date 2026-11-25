@@ -194,8 +194,9 @@ function buildSegs(ch){
     if(dlg)r*=1.03;return{r,p};
   };
   ch.p.forEach((para,pi)=>{
+    const start=out.length;
     const head=pi===0&&ch.p.length>1&&para.length<90&&!/[.!?…]$/.test(para);
-    if(head){const c=clean(para);if(c)out.push({d:para,t:c,r:.9,p:.94});return}
+    if(head){const c=clean(para);if(c)out.push({d:para,t:c,r:.9,p:.94,pp:true});return}
     const ss=para.match(/[^.!?…]+(?:[.!?…]+["»”’)]*|$)\s*/g)||[para];
     let buf='',bdlg=false;
     const flush=()=>{const c=clean(buf);if(c){const q=prosody(buf.trim(),bdlg);out.push({d:buf.trim(),t:c,r:q.r,p:q.p})}buf=''};
@@ -213,8 +214,9 @@ function buildSegs(ch){
       }
     });
     flush();
+    if(out.length>start)out[out.length-1].pp=true;   /* fine paragrafo */
   });
-  return out.length?out:[{d:'…',t:'…',r:1,p:1}];
+  return out.length?out:[{d:'…',t:'…',r:1,p:1,pp:true}];
 }
 /* ---------- speech engine ---------- */
 const qual=v=>{const n=v.name+' '+(v.voiceURI||'');let q=0;
@@ -252,10 +254,59 @@ function feed(my){
 function keepAlive(v){clearInterval(ka);ka=0;
   if(v&&v.localService===false&&/google/i.test(v.name)&&!/android/i.test(navigator.userAgent))
     ka=setInterval(()=>{if(speechSynthesis.speaking&&!speechSynthesis.paused){speechSynthesis.pause();speechSynthesis.resume()}},10000)}
-function play(){if(!cur)return;if(!('speechSynthesis' in window)){toast('Questo browser non supporta la sintesi vocale');return}speechSynthesis.cancel();playing=true;const my=++tok;pend=0;qc=ci;qs=segs;qi=si;keepAlive(pickVoice());ui();setTimeout(()=>feed(my),60)}
-function pause(){playing=false;tok++;pend=0;clearInterval(ka);ka=0;try{speechSynthesis.cancel()}catch(e){}save();ui()}
+/* ---------- voce offline (Piper) ----------
+   Il testo viene sintetizzato qualche brano in anticipo e programmato sul clock audio senza spazi:
+   nessuna attesa tra una frase e l'altra, anche senza internet. */
+const isPiper=()=>voiceName.startsWith('piper:')&&!!window.PIPER;
+let actx=null,pNodes=[],pTimers=[],pCache=new Map(),pSlow=false,pReady=false;
+const mkCtx=()=>{if(!actx){actx=new (window.AudioContext||window.webkitAudioContext)()}try{actx.resume&&actx.resume()}catch(e){}return actx};
+function pStop(){pNodes.forEach(n=>{try{n.stop()}catch(e){}try{n.disconnect()}catch(e){}});pNodes=[];pTimers.forEach(clearTimeout);pTimers=[]}
+const pSil=g=>{const e=g.t.replace(/["»”’)\s]+$/,'').slice(-1);return(g.pp?.75:e==='?'||e==='!'?.32:e==='…'?.5:/[,;:]/.test(e)?.16:.3)/speed};   /* pausa dopo il brano, in secondi */
+async function pSeg(id,g,key){
+  if(pCache.has(key))return pCache.get(key);
+  const r=await PIPER.synth(id,g.t,1/Math.max(.4,g.r*speed));
+  pCache.set(key,r);if(pCache.size>14)pCache.delete(pCache.keys().next().value);return r;
+}
+async function pRun(my){
+  const id=voiceName.slice(6),ctx=mkCtx();
+  try{
+    let c=ci,i=si,arr=segs,t=0,started=false;
+    if(!pReady)toast('Preparo la voce offline…');
+    while(my===tok&&playing){
+      if(i>=arr.length){if(c+1>=cur.chapters.length)break;c++;arr=buildSegs(cur.chapters[c]);i=0}
+      while(my===tok&&playing&&started&&t-ctx.currentTime>20)await new Promise(r=>setTimeout(r,250));   /* non si anticipa più di ~20 s */
+      if(my!==tok||!playing)return;
+      const g=arr[i],{pcm,rate}=await pSeg(id,g,id+'|'+c+'|'+i+'|'+speed);
+      if(my!==tok||!playing)return;
+      pReady=true;
+      const now=ctx.currentTime,at=Math.max(t,now+.05);
+      if(started&&at-t>1.2&&!pSlow){pSlow=true;toast('Il dispositivo è lento con questa voce: prova «Riccardo» o una voce del sistema')}
+      const buf=ctx.createBuffer(1,pcm.length,rate);buf.copyToChannel(pcm,0);
+      const src=ctx.createBufferSource();src.buffer=buf;src.connect(ctx.destination);src.start(at);pNodes.push(src);
+      src.onended=()=>{pNodes=pNodes.filter(n=>n!==src)};
+      const cc=c,ii=i,aa=arr;
+      pTimers.push(setTimeout(()=>{if(my!==tok)return;if(cc!==ci){ci=cc;segs=aa}si=ii;if(ii%4===0)save();ui()},Math.max(0,(at-now)*1000)));
+      t=at+buf.duration+pSil(g);started=true;i++;
+    }
+    if(my===tok&&playing){await new Promise(r=>setTimeout(r,Math.max(0,(t-ctx.currentTime)*1000)));if(my===tok)pause()}   /* fine del libro */
+  }catch(e){if(my!==tok)return;console.error(e);toast('Voce Piper: '+((e&&e.message)||e));pause()}
+}
+async function psample(id){
+  try{
+    const ctx=mkCtx();toast('Preparo la voce…');
+    const {pcm,rate}=await PIPER.synth(id,'Buonasera. Questa è la mia voce: ti leggerò il libro con calma.',1/speed);
+    pStop();const b=ctx.createBuffer(1,pcm.length,rate);b.copyToChannel(pcm,0);const n=ctx.createBufferSource();n.buffer=b;n.connect(ctx.destination);n.start();pNodes.push(n);
+  }catch(e){toast('Voce Piper: '+((e&&e.message)||e))}
+}
+function play(){
+  if(!cur)return;
+  if(isPiper()){try{speechSynthesis.cancel()}catch(e){}pStop();mkCtx();playing=true;const my=++tok;pend=0;ui();pRun(my);return}
+  if(!('speechSynthesis' in window)){toast('Questo browser non supporta la sintesi vocale');return}
+  pStop();speechSynthesis.cancel();playing=true;const my=++tok;pend=0;qc=ci;qs=segs;qi=si;keepAlive(pickVoice());ui();setTimeout(()=>feed(my),60)
+}
+function pause(){playing=false;tok++;pend=0;clearInterval(ka);ka=0;pStop();try{speechSynthesis.cancel()}catch(e){}save();ui()}
 function loadCh(i,s){ci=i;segs=buildSegs(cur.chapters[i]);si=Math.max(0,Math.min(s,segs.length-1))}
-function jump(i,s){const was=playing;tok++;pend=0;try{speechSynthesis.cancel()}catch(e){}loadCh(i,s);save();was?play():ui()}
+function jump(i,s){const was=playing;tok++;pend=0;pStop();try{speechSynthesis.cancel()}catch(e){}loadCh(i,s);save();was?play():ui()}
 async function openBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   if(!b.chapters){toast('Scarico il libro…');try{b.chapters=(await dbGet(id)).chapters}catch(e){return toast('Errore di download: '+e.message)}}
@@ -300,13 +351,38 @@ function vTips(){
   return '<p style="color:var(--mut);font-size:12px;line-height:1.45">'+t+'</p>';
 }
 function sample(){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('Buonasera. Questa è la mia voce: ti leggerò il libro con calma, fermandomi quando serve.');u.lang='it-IT';const v=pickVoice();if(v)u.voice=v;u.rate=clampR(speed);speechSynthesis.speak(u)}catch(e){}}
-$('#vo').onclick=()=>{loadVoices();const cv=pickVoice();
-  sheet('<h3>Voce di lettura</h3>'+(voices.length?voices.map(v=>`<button class="it ${cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}<br><small style="color:var(--mut)">${vTag(v)}</small></button>`).join('')+vTips():'<p>Nessuna voce italiana trovata sul dispositivo.</p>'+vTips()));
-  $('#sheet').onclick=e=>{const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si);else sample()}}};
+async function pickPiper(id,btn){
+  if(!window.PIPER||!PIPER.ok()){toast('Questo browser non supporta le voci offline');return}
+  mkCtx();
+  const sm=btn.querySelector('small'),say=t=>{sm.textContent=t};
+  say('Controllo i componenti…');
+  const miss=await PIPER.check();
+  if(miss.length){say('Componenti mancanti ('+miss.join(', ')+'): esegui su GitHub l’azione «Prepara Piper».');return}
+  if(!(await PIPER.has(id))){
+    try{await PIPER.download(id,p=>say('Scarico la voce… '+Math.round(p*100)+'%'))}
+    catch(e){say('Download non riuscito: '+((e&&e.message)||e));return}
+  }
+  pCache.clear();voiceName='piper:'+id;ls('sb_voice',voiceName);$('#scrim').click();
+  if(playing)jump(ci,si);else psample(id);
+}
+$('#vo').onclick=async()=>{
+  loadVoices();const cv=pickVoice(),pv=voiceName.startsWith('piper:');
+  let pip='';
+  if(window.PIPER&&PIPER.ok()){
+    const st=await Promise.all(PIPER.VOICES.map(v=>PIPER.has(v.id)));
+    pip='<h3 style="margin-top:16px">Voci offline (Piper)</h3>'+PIPER.VOICES.map((v,k)=>`<button class="it ${voiceName==='piper:'+v.id?'on':''}" data-p="${v.id}">${esc(v.nome)}<br><small style="color:var(--mut)">${st[k]?'Pronta · funziona senza internet':'Da scaricare una volta · '+esc(v.info)}</small></button>`).join('')+'<p style="color:var(--mut);font-size:12px;line-height:1.45">Sintesi neurale che gira sul tuo dispositivo. Dopo il primo download legge anche senza internet; sui telefoni più vecchi può essere lenta.</p>';
+  }
+  sheet('<h3>Voce di lettura</h3>'+(voices.length?voices.map(v=>`<button class="it ${!pv&&cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}<br><small style="color:var(--mut)">${vTag(v)}</small></button>`).join(''):'<p>Nessuna voce italiana trovata sul dispositivo.</p>')+vTips()+pip);
+  $('#sheet').onclick=e=>{
+    const p=e.target.closest('[data-p]');if(p){pickPiper(p.dataset.p,p);return}
+    const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si);else sample()}
+  }};
 (async()=>{await sbReady();books=SBTG.cached();render();try{books=await SBTG.list()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}render()})();
 $('#tgout').onclick=async()=>{await sbReady();SBTG.menu()};
 let rt=0;addEventListener('sbtg-cover',e=>{covers[e.detail.id]=e.detail.url;clearTimeout(rt);rt=setTimeout(()=>{render();if(cur&&$('#pcv')&&covers[cur.id]){$('#pcv').innerHTML=cover(cur);$('#mcv').innerHTML=cover(cur)}},150)});
 addEventListener('sbtg-catalog',e=>{const old=new Map(books.map(b=>[b.id,b]));books=e.detail.map(b=>{const o=old.get(b.id);return o&&o.chapters?{...b,chapters:o.chapters}:b});render()});
 </script>
 <script type="module" src="./storage.js"></script>
+<script type="module" src="./piper.js"></script>
+<script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))</script>
 </body></html>

@@ -20,7 +20,8 @@ const FILES=['ort/ort.min.js','piper_phonemize.js','piper_phonemize.wasm','piper
 export async function check(){
   const miss=[];
   for(const f of FILES){
-    try{const r=await fetch(BASE+f,{method:'HEAD',cache:'no-cache'});if(!r.ok)miss.push(f)}catch(e){miss.push(f)}
+    /* richiesta di 1 byte (Range) e subito interrotta: funziona anche offline grazie alla cache del service worker */
+    try{const ac=new AbortController(),r=await fetch(BASE+f,{headers:{Range:'bytes=0-0'},signal:ac.signal});ac.abort();if(!r.ok)miss.push(f)}catch(e){miss.push(f)}
   }
   return miss;
 }
