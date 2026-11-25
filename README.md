@@ -13,6 +13,12 @@ App web in stile Storytel: carichi libri (EPUB, TXT, HTML, Markdown), finiscono 
 ## Pubblicazione
 Cloudflare (Workers Builds) pubblica la cartella `public/` a ogni commit. Nessuna variabile o Secret da impostare.
 
+## Voci offline (Piper)
+1. Su GitHub: Actions → «Prepara Piper» → Run workflow (una volta sola). Crea la cartella `piper/` dentro `public/` (o `docs/`).
+2. Nel player: 🎙 Voce → «Voci offline (Piper)» → Paola o Riccardo. Il modello si scarica una volta (28-64 MB) e resta nel browser.
+3. Il service worker (`sw.js`) tiene in cache i file pesanti: dopo la prima apertura la voce funziona anche senza internet.
+   Se aggiorni `telegram-lib.js` o i file in `piper/`, cambia il nome della cache in `sw.js` (v2, v3…).
+
 ## Note
 - `public/telegram-lib.js` è la libreria Telegram già compilata. Per rifarla: GitHub → Actions → «Crea libreria Telegram» → Run workflow.
 - Telefono e PC hanno punti di ascolto separati (salvati nel browser).
