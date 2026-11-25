@@ -24,6 +24,7 @@ h2{font-size:18px;margin:22px 0 10px}
 .cv .cvi{display:block;flex:1;min-height:0;width:100%;object-fit:contain}
 .cv b{font-size:14px;line-height:1.15}.cv i{font-size:11px;opacity:.85}
 .card p{margin:6px 0 0;font-weight:600;font-size:13px;line-height:1.2}.card small{color:var(--mut)}
+.opt{position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;line-height:20px;font-size:16px}
 .del{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;line-height:24px}
 .hero{display:flex;gap:14px;background:var(--card);border-radius:16px;padding:12px;align-items:center;cursor:pointer}
 .hero .cv{width:96px;flex:none}.hero div.t{flex:1;min-width:0}
@@ -70,6 +71,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}
  <div class="ctl"><button id="pc" title="Capitolo precedente">⏮</button><button id="bk" title="Indietro">⟲</button><button class="play" id="pp">▶</button><button id="fw" title="Avanti">⟳</button><button id="nc" title="Capitolo successivo">⏭</button></div>
  <div class="row"><button id="sp">1×</button><button id="sl">☾ Timer</button><button id="chs">☰ Capitoli</button><button id="vo">🎙 Voce</button></div>
 </div>
+<audio id="au" playsinline preload="auto"></audio><input id="afile" type="file" accept=".mp3,audio/mpeg" multiple hidden>
 <div class="scrim" id="scrim"></div><div class="sheet" id="sheet"></div><div class="toast" id="toast"></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -82,7 +84,7 @@ const dbPut=async b=>{await sbReady();return SBTG.put(b,p=>toast('Carico «'+b.t
 const dbGet=async id=>{await sbReady();return SBTG.get(id)};
 const dbDel=async id=>{await sbReady();return SBTG.del(id)};
 const prog=id=>{try{return JSON.parse(ls('sb_p_'+id))||{}}catch(e){return{}}};
-function save(){if(cur)ls('sb_p_'+cur.id,JSON.stringify({ch:ci,si,pc:(ci+si/Math.max(1,segs.length))/cur.chapters.length}))}
+function save(){if(!cur)return;const au_=typeof useAudio==='function'&&useAudio(),fr=au_?(au.duration?aT/au.duration:0):si/Math.max(1,segs.length);ls('sb_p_'+cur.id,JSON.stringify({ch:ci,si:au_?0:si,at:au_?aT:0,pc:(ci+fr)/cur.chapters.length}))}
 function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',Math.max(2600,t.length*55))}
 /* ---------- import ---------- */
 const norm=s=>s.replace(/\s+/g,' ').trim();
@@ -151,8 +153,57 @@ const covers={};   /* id libro → indirizzo locale della copertina */
 const cover=(b,x='')=>{const h=hue(b.title),bg=`linear-gradient(145deg,hsl(${h} 60% 42%),hsl(${(h+40)%360} 65% 26%))`;
   if(covers[b.id])return `<div class="cv ${x}" style="background:${bg};padding:0"><img class="cvi" src="${covers[b.id]}" alt="${esc(b.title)}"></div>`;
   return `<div class="cv ${x}" style="background:${bg}"><b>${esc(b.title)}</b><i>${esc(b.author||'')}</i></div>`};
-const card=(b,d)=>`<div class="card" data-id="${b.id}">${cover(b)}<p>${esc(b.title)}</p><small>${esc(b.author||'Autore sconosciuto')}</small>${d?'<button class="del" data-del="'+b.id+'">×</button>':''}</div>`;
+const card=(b,d)=>`<div class="card" data-id="${b.id}">${cover(b)}<p>${esc(b.title)}</p><small>${esc(b.author||'Autore sconosciuto')}${audCount(b.id)?' · 🎧':''}</small>${d?'<button class="opt" data-opt="'+b.id+'" title="Audio narrato e altro">⋯</button><button class="del" data-del="'+b.id+'">×</button>':''}</div>`;
 const emptyBox=`<div class="empty"><b>La tua libreria è vuota</b>Tocca «Aggiungi libri» e carica file EPUB, TXT, HTML o Markdown.<br>Compariranno qui e potrai ascoltarli subito.</div>`;
+/* ---------- audio narrato: esporta il testo, carica gli MP3 ---------- */
+let audioBook=null;
+async function ensureChapters(b){if(!b.chapters){toast('Preparo il testo…');b.chapters=(await dbGet(b.id)).chapters}return b.chapters}
+async function exportText(b){
+  try{
+    const chapters=await ensureChapters(b);
+    const bl=new Blob([JSON.stringify({title:b.title,author:b.author||'',chapters})],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(bl);
+    a.download=(b.title||'libro').replace(/[^\w\-]+/g,'_').slice(0,40)+'.storybooks.json';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast('Testo scaricato. Ora usa il narratore sul PC: comando «audiolibro»');
+  }catch(e){toast('Errore: '+e.message)}
+}
+/* i file si abbinano al capitolo dall'ultimo numero nel nome: 001.mp3 → capitolo 1 */
+function chapterOf(name){const m=String(name).match(/(\d+)(?!.*\d)/);return m?+m[1]-1:-1}
+$('#afile').onchange=async e=>{
+  const files=[...e.target.files];e.target.value='';
+  const b=books.find(x=>x.id===audioBook);if(!b||!files.length)return;
+  try{
+    const N=(await ensureChapters(b)).length,ok=[],skip=[];
+    for(const f of files){const n=chapterOf(f.name);(n>=0&&n<N?ok:skip).push({f,n})}
+    ok.sort((x,y)=>x.n-y.n);
+    if(!ok.length){toast('Nessun file corrisponde ai capitoli: i nomi devono contenere il numero (001.mp3, 002.mp3…)');return}
+    await sbReady();
+    for(let k=0;k<ok.length;k++){
+      const {f,n}=ok[k];
+      await SBTG.putAudio(b.id,n,f,p=>toast(`Carico l’audio · capitolo ${n+1} (${k+1}/${ok.length}) ${Math.round(p*100)}%`),b.title);
+    }
+    toast(`Audio caricato per ${ok.length} capitol${ok.length===1?'o':'i'}`+(skip.length?` · ${skip.length} file ignorati (numero non valido)`:''));
+    render();
+  }catch(err){toast('Audio non caricato: '+err.message)}
+};
+function bookMenu(id){
+  const b=books.find(x=>x.id===id);if(!b)return;
+  const c=audCount(id);
+  sheet(`<h3>${esc(b.title)}</h3>
+   <button class="it" data-a="export">📄 Scarica il testo per il narratore</button>
+   <button class="it" data-a="add">🎧 Aggiungi audio (MP3 del narratore)</button>
+   ${c?`<button class="it" data-a="rem">🗑 Rimuovi l’audio narrato (${c} capitoli)</button>`:''}
+   <p style="color:var(--mut);font-size:12px;line-height:1.45">Sul PC: scarica il testo, poi <b>python src/narratore.py audiolibro file.storybooks.json -v isabella</b>. Crea un MP3 per capitolo (001.mp3, 002.mp3…): caricali qui con «Aggiungi audio». I capitoli senza audio restano letti dalla voce scelta.</p>`);
+  $('#sheet').onclick=async e=>{
+    const x=e.target.closest('[data-a]');if(!x)return;$('#scrim').click();
+    if(x.dataset.a==='export')exportText(b);
+    else if(x.dataset.a==='add'){audioBook=id;$('#afile').click()}
+    else if(x.dataset.a==='rem'&&confirm('Rimuovere tutto l’audio narrato di questo libro? Il testo resta.')){
+      try{await sbReady();if(cur&&cur.id===id&&useAudio())pause();await SBTG.delAudio(id);toast('Audio rimosso');render()}catch(err){toast('Errore: '+err.message)}
+    }
+  };
+}
 function render(){
   const m=$('#main');
   if(view==='home'){
@@ -168,6 +219,7 @@ function render(){
   }
 }
 $('#main').onclick=async e=>{
+  const o=e.target.closest('[data-opt]');if(o){e.stopPropagation();bookMenu(o.dataset.opt);return}
   const d=e.target.closest('[data-del]');
   if(d){e.stopPropagation();const id=d.dataset.del;if(cur&&cur.id===id){pause();cur=null;$('#mini').style.display='none'}books=books.filter(b=>b.id!==id);await dbDel(id);render();return}
   const c=e.target.closest('[data-id]');if(c)openBook(c.dataset.id);
@@ -245,7 +297,11 @@ function feed(my){
   if(my!==tok||!playing)return;
   const v=pickVoice();
   while(pend<LOOK){
-    if(qi>=qs.length){if(qc+1>=cur.chapters.length)break;qc++;qs=buildSegs(cur.chapters[qc]);qi=0}
+    if(qi>=qs.length){
+      if(qc+1>=cur.chapters.length)break;
+      if(audOn(cur.id)&&hasAud(cur.id,qc+1)){if(pend===0)jump(qc+1,0);return}   /* il capitolo dopo ha l'audio narrato: ci si passa a fine coda */
+      qc++;qs=buildSegs(cur.chapters[qc]);qi=0;
+    }
     enqueue(my,v,qc,qi,qs);qi++;
   }
   if(pend===0&&qi>=qs.length&&qc+1>=cur.chapters.length)pause();   /* fine del libro */
@@ -270,10 +326,10 @@ async function pSeg(id,g,key){
 async function pRun(my){
   const id=voiceName.slice(6),ctx=mkCtx();
   try{
-    let c=ci,i=si,arr=segs,t=0,started=false;
+    let c=ci,i=si,arr=segs,t=0,started=false,toAudio=-1;
     if(!pReady)toast('Preparo la voce offline…');
     while(my===tok&&playing){
-      if(i>=arr.length){if(c+1>=cur.chapters.length)break;c++;arr=buildSegs(cur.chapters[c]);i=0}
+      if(i>=arr.length){if(c+1>=cur.chapters.length)break;if(audOn(cur.id)&&hasAud(cur.id,c+1)){toAudio=c+1;break}c++;arr=buildSegs(cur.chapters[c]);i=0}
       while(my===tok&&playing&&started&&t-ctx.currentTime>20)await new Promise(r=>setTimeout(r,250));   /* non si anticipa più di ~20 s */
       if(my!==tok||!playing)return;
       const g=arr[i],{pcm,rate}=await pSeg(id,g,id+'|'+c+'|'+i+'|'+speed);
@@ -288,7 +344,7 @@ async function pRun(my){
       pTimers.push(setTimeout(()=>{if(my!==tok)return;if(cc!==ci){ci=cc;segs=aa}si=ii;if(ii%4===0)save();ui()},Math.max(0,(at-now)*1000)));
       t=at+buf.duration+pSil(g);started=true;i++;
     }
-    if(my===tok&&playing){await new Promise(r=>setTimeout(r,Math.max(0,(t-ctx.currentTime)*1000)));if(my===tok)pause()}   /* fine del libro */
+    if(my===tok&&playing){await new Promise(r=>setTimeout(r,Math.max(0,(t-ctx.currentTime)*1000)));if(my===tok){if(toAudio>=0)jump(toAudio,0);else pause()}}   /* fine capitolo (→ audio narrato) o fine libro */
   }catch(e){if(my!==tok)return;console.error(e);toast('Voce Piper: '+((e&&e.message)||e));pause()}
 }
 async function psample(id){
@@ -298,20 +354,85 @@ async function psample(id){
     pStop();const b=ctx.createBuffer(1,pcm.length,rate);b.copyToChannel(pcm,0);const n=ctx.createBufferSource();n.buffer=b;n.connect(ctx.destination);n.start();pNodes.push(n);
   }catch(e){toast('Voce Piper: '+((e&&e.message)||e))}
 }
+/* ---------- audio narrato (MP3 del Narratore Libri) ----------
+   Capitoli già registrati con le voci neurali: si ascoltano con un normale lettore audio, con riproduzione in
+   background, controlli nella schermata di blocco e ripresa dal punto in cui eri. I capitoli senza audio
+   continuano a essere letti dalla voce scelta. */
+const au=$('#au');
+let aT=0,aT0=0,aF=0,aUrl='',aSave=0;const aBlobs=new Map();
+const SILENT='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+const hasAud=(id,n)=>!!(window.SBTG&&SBTG.audioOf(id)[n]);
+const audOn=id=>ls('sb_au_'+id)!=='off';
+const useAudio=()=>!!cur&&audOn(cur.id)&&hasAud(cur.id,ci);
+const audCount=id=>window.SBTG?Object.keys(SBTG.audioOf(id)).length:0;
+let unlocked=false;   /* il primo tocco "sblocca" l'audio sui telefoni, che altrimenti bloccano l'avvio automatico */
+addEventListener('pointerdown',()=>{if(unlocked)return;unlocked=true;try{au.src=SILENT;const p=au.play();p&&p.then(()=>au.pause()).catch(()=>{})}catch(e){}},{once:true,passive:true});
+async function aBlob(id,n,my,visible){
+  const k=id+':'+n;if(aBlobs.has(k))return aBlobs.get(k);
+  const loc=await SBTG.hasAudioLocal(id,n);
+  if(visible&&my===tok)toast(loc?'Apro l’audio…':'Scarico l’audio del capitolo…');
+  const bl=await SBTG.getAudio(id,n,p=>{if(visible&&!loc&&my===tok)toast('Scarico l’audio… '+Math.round(p*100)+'%')});
+  aBlobs.set(k,bl);if(aBlobs.size>3)aBlobs.delete(aBlobs.keys().next().value);return bl;
+}
+function mediaSess(){
+  if(!('mediaSession' in navigator)||typeof MediaMetadata==='undefined')return;
+  try{navigator.mediaSession.metadata=new MediaMetadata({title:cur.chapters[ci].t,artist:cur.author||'',album:cur.title,artwork:covers[cur.id]?[{src:covers[cur.id],sizes:'512x512',type:'image/jpeg'}]:[]})}catch(e){}
+  const h=(a,f)=>{try{navigator.mediaSession.setActionHandler(a,f)}catch(e){}};
+  h('play',()=>play());h('pause',()=>pause());h('seekbackward',()=>aSeekBy(-15));h('seekforward',()=>aSeekBy(15));
+  h('previoustrack',()=>$('#pc').click());h('nexttrack',()=>$('#nc').click());
+}
+function aSeekBy(d){if(!au.duration)return;au.currentTime=Math.max(0,Math.min(au.duration-.5,au.currentTime+d));aT=au.currentTime;aTick(true)}
+function aTick(force){
+  if(!cur||!useAudio())return;
+  aT=au.currentTime;const d=au.duration||0;
+  $('#seek').value=Math.round(1000*(d?aT/d:0));
+  $('#l2').textContent=Math.round(100*(ci+(d?aT/d:0))/cur.chapters.length)+'% del libro';
+  if(force||Date.now()-aSave>5000){aSave=Date.now();save()}
+}
+async function aPlay(){
+  try{speechSynthesis.cancel()}catch(e){}pStop();
+  playing=true;const my=++tok;pend=0;ui();
+  const id=cur.id,n=ci;
+  try{
+    const bl=await aBlob(id,n,my,true);
+    if(my!==tok)return;
+    if(aUrl)URL.revokeObjectURL(aUrl);aUrl=URL.createObjectURL(bl);
+    au.src=aUrl;au.playbackRate=speed;au.preservesPitch=true;au.webkitPreservesPitch=true;
+    await new Promise(r=>{au.onloadedmetadata=r;setTimeout(r,8000)});
+    if(my!==tok)return;
+    const d=au.duration||0;
+    const t=aT0>0?aT0:(aF>0&&d?aF*d:0);aT0=0;aF=0;
+    if(t>0&&d)au.currentTime=Math.min(t,Math.max(0,d-1));
+    aT=au.currentTime;
+    await au.play();
+    if(my!==tok)return;
+    mediaSess();ui();
+    if(hasAud(id,n+1))aBlob(id,n+1,my,false).catch(()=>{});   /* scarica in anticipo il capitolo successivo */
+  }catch(e){
+    if(my!==tok)return;
+    if(e&&e.name==='NotAllowedError'){playing=false;ui();toast('Tocca ▶ per avviare l’audio');return}
+    console.error(e);toast('Audio: '+((e&&e.message)||e));pause();
+  }
+}
+au.addEventListener('timeupdate',()=>aTick());
+au.addEventListener('ended',()=>{if(!playing||!useAudio())return;aT0=0;if(ci+1<cur.chapters.length)jump(ci+1,0);else pause()});
+au.addEventListener('error',()=>{if(playing&&useAudio()&&au.src&&au.src!==SILENT&&!au.src.startsWith('data:')){toast('Audio non riproducibile');pause()}});
 function play(){
   if(!cur)return;
+  if(useAudio()){aPlay();return}
+  try{au.pause()}catch(e){}
   if(isPiper()){try{speechSynthesis.cancel()}catch(e){}pStop();mkCtx();playing=true;const my=++tok;pend=0;ui();pRun(my);return}
   if(!('speechSynthesis' in window)){toast('Questo browser non supporta la sintesi vocale');return}
   pStop();speechSynthesis.cancel();playing=true;const my=++tok;pend=0;qc=ci;qs=segs;qi=si;keepAlive(pickVoice());ui();setTimeout(()=>feed(my),60)
 }
-function pause(){playing=false;tok++;pend=0;clearInterval(ka);ka=0;pStop();try{speechSynthesis.cancel()}catch(e){}save();ui()}
+function pause(){playing=false;tok++;pend=0;clearInterval(ka);ka=0;pStop();try{au.pause();aT=au.currentTime}catch(e){}try{speechSynthesis.cancel()}catch(e){}save();ui()}
 function loadCh(i,s){ci=i;segs=buildSegs(cur.chapters[i]);si=Math.max(0,Math.min(s,segs.length-1))}
-function jump(i,s){const was=playing;tok++;pend=0;pStop();try{speechSynthesis.cancel()}catch(e){}loadCh(i,s);save();was?play():ui()}
+function jump(i,s){const was=playing;tok++;pend=0;pStop();try{au.pause()}catch(e){}try{speechSynthesis.cancel()}catch(e){}if(i!==ci||s!==si){aT=0;aT0=0}loadCh(i,s);save();was?play():ui()}
 async function openBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   if(!b.chapters){toast('Scarico il libro…');try{b.chapters=(await dbGet(id)).chapters}catch(e){return toast('Errore di download: '+e.message)}}
   if(cur&&cur.id!==id){pause()}
-  if(!cur||cur.id!==id){cur=b;const p=prog(id);loadCh(Math.min(p.ch||0,b.chapters.length-1),p.si||0);ls('sb_last',id)}
+  if(!cur||cur.id!==id){cur=b;const p=prog(id);aT=0;aT0=p.at||0;loadCh(Math.min(p.ch||0,b.chapters.length-1),p.si||0);ls('sb_last',id)}
   $('#pl').classList.add('open');play();
 }
 function ui(){
@@ -319,21 +440,21 @@ function ui(){
   $('#mini').style.display='flex';
   $('#mcv').innerHTML=cover(cur);$('#mt').innerHTML=`<b>${esc(cur.title)}</b><small>${esc(cur.chapters[ci].t)}</small>`;
   $('#pcv').innerHTML=cover(cur);$('#pt').textContent=cur.title;$('#pa').textContent=cur.author||'';
-  const g=segs[si]||segs[segs.length-1];$('#now').textContent=g?g.d:'';
-  $('#seek').value=Math.round(1000*si/Math.max(1,segs.length-1));
+  const g=segs[si]||segs[segs.length-1],am=useAudio();$('#now').textContent=am?'🎧 Audio narrato · tocca ⟲ ⟳ per spostarti di 15 secondi':(g?g.d:'');
+  $('#seek').value=am?Math.round(1000*(au.duration?aT/au.duration:0)):Math.round(1000*si/Math.max(1,segs.length-1));
   $('#l1').textContent=`${ci+1}/${cur.chapters.length} · ${cur.chapters[ci].t.slice(0,30)}`;
-  $('#l2').textContent=Math.round(100*(ci+si/Math.max(1,segs.length))/cur.chapters.length)+'% del libro';
+  $('#l2').textContent=Math.round(100*(ci+(am?(au.duration?aT/au.duration:0):si/Math.max(1,segs.length)))/cur.chapters.length)+'% del libro';
   $('#pp').textContent=$('#mplay').textContent=playing?'❚❚':'▶';
   $('#sp').textContent=speed+'×';
 }
 $('#pp').onclick=$('#mplay').onclick=()=>playing?pause():play();
 $('#mt').onclick=()=>$('#pl').classList.add('open');
 $('#close').onclick=()=>$('#pl').classList.remove('open');
-$('#seek').onchange=e=>jump(ci,Math.round(e.target.value/1000*(segs.length-1)));
-$('#bk').onclick=()=>jump(ci,si-4);$('#fw').onclick=()=>jump(ci,si+4);
-$('#pc').onclick=()=>jump(Math.max(0,si>3?ci:ci-1),0);
+$('#seek').onchange=e=>{if(useAudio()){if(au.duration){au.currentTime=e.target.value/1000*au.duration;aTick(true)}}else jump(ci,Math.round(e.target.value/1000*(segs.length-1)))};
+$('#bk').onclick=()=>useAudio()?aSeekBy(-15):jump(ci,si-4);$('#fw').onclick=()=>useAudio()?aSeekBy(15):jump(ci,si+4);
+$('#pc').onclick=()=>jump(Math.max(0,(useAudio()?aT>5:si>3)?ci:ci-1),0);
 $('#nc').onclick=()=>ci+1<cur.chapters.length&&jump(ci+1,0);
-$('#sp').onclick=()=>{const l=[.8,.9,1,1.1,1.25,1.5];speed=l[(l.indexOf(speed)+1)%l.length];ls('sb_speed',speed);if(playing)jump(ci,si);else ui()};
+$('#sp').onclick=()=>{const l=[.8,.9,1,1.1,1.25,1.5];speed=l[(l.indexOf(speed)+1)%l.length];ls('sb_speed',speed);if(useAudio()){au.playbackRate=speed;ui()}else if(playing)jump(ci,si);else ui()};
 $('#sl').onclick=()=>{const l=[0,15,30,60];sleepI=(sleepI+1)%4;clearTimeout(sleepT);const m=l[sleepI];
   $('#sl').textContent=m?`☾ ${m} min`:'☾ Timer';if(m){sleepT=setTimeout(()=>{pause();$('#sl').textContent='☾ Timer';sleepI=0;toast('Timer scaduto: buonanotte')},m*60000)}};
 function sheet(h){$('#sheet').innerHTML=h;$('#sheet').style.display='block';$('#scrim').style.display='block'}
@@ -372,8 +493,18 @@ $('#vo').onclick=async()=>{
     const st=await Promise.all(PIPER.VOICES.map(v=>PIPER.has(v.id)));
     pip='<h3 style="margin-top:16px">Voci offline (Piper)</h3>'+PIPER.VOICES.map((v,k)=>`<button class="it ${voiceName==='piper:'+v.id?'on':''}" data-p="${v.id}">${esc(v.nome)}<br><small style="color:var(--mut)">${st[k]?'Pronta · funziona senza internet':'Da scaricare una volta · '+esc(v.info)}</small></button>`).join('')+'<p style="color:var(--mut);font-size:12px;line-height:1.45">Sintesi neurale che gira sul tuo dispositivo. Dopo il primo download legge anche senza internet; sui telefoni più vecchi può essere lenta.</p>';
   }
-  sheet('<h3>Voce di lettura</h3>'+(voices.length?voices.map(v=>`<button class="it ${!pv&&cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}<br><small style="color:var(--mut)">${vTag(v)}</small></button>`).join(''):'<p>Nessuna voce italiana trovata sul dispositivo.</p>')+vTips()+pip);
+  const nA=cur?audCount(cur.id):0,on=cur&&audOn(cur.id);
+  const audBtn=nA?`<button class="it ${on?'on':''}" data-aud="1">🎧 Audio narrato (${nA} capitoli)<br><small style="color:var(--mut)">${on?'Attivo: i capitoli con audio si ascoltano con la voce del narratore':'Disattivato: si usa la voce scelta qui sotto'}</small></button>`:'';
+  sheet('<h3>Voce di lettura</h3>'+audBtn+(voices.length?voices.map(v=>`<button class="it ${!pv&&cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}<br><small style="color:var(--mut)">${vTag(v)}</small></button>`).join(''):'<p>Nessuna voce italiana trovata sul dispositivo.</p>')+vTips()+pip);
   $('#sheet').onclick=e=>{
+    const t=e.target.closest('[data-aud]');
+    if(t){
+      const was=useAudio(),fr=was?(au.duration?aT/au.duration:0):0;
+      ls('sb_au_'+cur.id,on?'off':'on');$('#scrim').click();
+      if(was){aT=0;jump(ci,Math.floor(fr*Math.max(1,segs.length)))}                 /* dall'audio alla voce: stesso punto del capitolo */
+      else if(useAudio()){aF=si/Math.max(1,segs.length);const w=playing;if(w)jump(ci,0);else ui()}   /* dalla voce all'audio */
+      else ui();
+      return}
     const p=e.target.closest('[data-p]');if(p){pickPiper(p.dataset.p,p);return}
     const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si);else sample()}
   }};

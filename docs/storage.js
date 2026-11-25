@@ -130,22 +130,28 @@ const wrap=fn=>async(...a)=>{
 /* ---------- libri ---------- */
 const idx=new Map();      /* id libro → id del messaggio nel gruppo */
 const covIdx=new Map();   /* id libro → id del messaggio con la copertina (c<id>.jpg) */
+const audIdx=new Map();   /* id libro → {indice capitolo → id del messaggio audio a<id>_<NNN>.mp3} */
 const fname=m=>(m.file&&m.file.name)||((m.document&&m.document.attributes)||[]).find(a=>a.className==='DocumentAttributeFilename')?.fileName||'';
 const saveCache=l=>{try{localStorage.setItem('sb_cat',JSON.stringify(l))}catch(e){}};
 function cached(){
-  try{const l=JSON.parse(localStorage.getItem('sb_cat')||'[]');l.forEach(b=>{idx.set(b.id,b.msg);if(b.cover)covIdx.set(b.id,b.cover)});queueMicrotask(()=>sweep(l));return l}
+  try{const l=JSON.parse(localStorage.getItem('sb_cat')||'[]');l.forEach(b=>{idx.set(b.id,b.msg);if(b.cover)covIdx.set(b.id,b.cover);if(b.audio&&Object.keys(b.audio).length)audIdx.set(b.id,b.audio)});queueMicrotask(()=>sweep(l));return l}
   catch(e){return[]}
 }
 const annuncia=l=>window.dispatchEvent(new CustomEvent('sbtg-catalog',{detail:l}));
 async function _list({client,ent}){
   const ms=await withTimeout(client.getMessages(ent,{limit:3000}),90000,'TIMEOUT_LIST');
-  const out=[],covs=new Map();idx.clear();covIdx.clear();
-  for(const m of ms){const mc=/^c(b[0-9a-z]+)\.jpg$/i.exec(fname(m));if(mc&&!covs.has(mc[1]))covs.set(mc[1],m.id)}   /* il più recente vince */
+  const out=[],covs=new Map(),auds=new Map();idx.clear();covIdx.clear();audIdx.clear();
+  for(const m of ms){
+    const n=fname(m),mc=/^c(b[0-9a-z]+)\.jpg$/i.exec(n);
+    if(mc&&!covs.has(mc[1]))covs.set(mc[1],m.id);                                /* il più recente vince */
+    const ma=/^a(b[0-9a-z]+)_(\d{3})\.mp3$/i.exec(n);
+    if(ma){const o=auds.get(ma[1])||{};if(!o[+ma[2]-1])o[+ma[2]-1]=m.id;auds.set(ma[1],o)}   /* audio narrato: capitolo = numero nel nome */
+  }
   for(const m of ms){
     const name=fname(m);if(!/^b[0-9a-z]+\.json$/i.test(name))continue;
     const id=name.slice(0,-5),[t,a]=String(m.message||'').split('\n');
-    out.push({id,title:t||id,author:a||'',added:(m.date||0)*1000,msg:m.id,cover:covs.get(id)||0});
-    idx.set(id,m.id);if(covs.get(id))covIdx.set(id,covs.get(id));
+    out.push({id,title:t||id,author:a||'',added:(m.date||0)*1000,msg:m.id,cover:covs.get(id)||0,audio:auds.get(id)||null});
+    idx.set(id,m.id);if(covs.get(id))covIdx.set(id,covs.get(id));if(auds.get(id))audIdx.set(id,auds.get(id));
   }
   saveCache(out);annuncia(out);queueMicrotask(()=>sweep(out));return out;
 }
@@ -187,16 +193,60 @@ async function put(b,onProgress){
 async function del(id){
   return run(async c=>{
     if(!idx.has(id))await _list(c);
-    const ids=[idx.get(id),covIdx.get(id)].filter(Boolean);
+    const ids=[idx.get(id),covIdx.get(id),...Object.values(audIdx.get(id)||{})].filter(Boolean);
     if(ids.length)await c.client.deleteMessages(c.ent,ids,{revoke:true});
     idx.delete(id);covIdx.delete(id);saveCache(cached().filter(x=>x.id!==id));
     idbDel(id);if(urls[id]){URL.revokeObjectURL(urls[id]);delete urls[id]}
+    for(const n of Object.keys(audIdx.get(id)||{}))idbDel('aud:'+id+':'+n);audIdx.delete(id);
   });
 }
 async function logout(){
   try{const {client,tg}=await withTimeout(tgClient(),15000,'TIMEOUT');await withTimeout(client.invoke(new tg.Api.auth.LogOut()),10000,'TIMEOUT')}catch(e){}
   clearSession();try{localStorage.removeItem('sb_cat');localStorage.removeItem('sb_cov_try');indexedDB.deleteDatabase('sb_cov')}catch(e){}
   tgReset();location.reload();
+}
+
+/* ---------- audio narrato ----------
+   File MP3 prodotti sul PC dal «Narratore Libri» (uno per capitolo, numerati 001, 002…), caricati nel gruppo
+   come a<id libro>_<NNN>.mp3 e abbinati al capitolo dal numero. Dopo il primo ascolto restano nel browser. */
+const pad3=n=>String(n).padStart(3,'0');
+const audioOf=id=>audIdx.get(id)||{};
+const setAudioCache=(id,o)=>{const l=cached().map(x=>x.id===id?{...x,audio:Object.keys(o).length?o:null}:x);saveCache(l);annuncia(l)};
+async function putAudio(id,n,file,onProgress,title){
+  return run(async({client,tg,ent})=>{
+    if(!idx.has(id))await _list({client,ent});
+    if(!idx.has(id))throw new Error('Libro non trovato nel gruppo');
+    const f=new File([file],'a'+id+'_'+pad3(n+1)+'.mp3',{type:'audio/mpeg'});
+    const msg=await tgSendFile(tg,client,ent,f,p=>{if(onProgress)onProgress(typeof p==='number'?p:0)},'Audio · '+one(title).slice(0,120)+' · cap. '+(n+1));
+    const o={...audioOf(id)},old=o[n];o[n]=msg.id;audIdx.set(id,o);
+    if(old)try{await client.deleteMessages(ent,[old],{revoke:true})}catch(e){}     /* sostituisce un audio già presente */
+    await idbSet('aud:'+id+':'+n,f);
+    setAudioCache(id,o);
+  });
+}
+async function getAudio(id,n,onProgress){
+  const k='aud:'+id+':'+n,hit=await idbGet(k);
+  if(hit)return hit;
+  return run(async c=>{
+    let mid=audioOf(id)[n];
+    if(!mid){await _list(c);mid=audioOf(id)[n]}
+    if(!mid)throw new Error('Audio non trovato');
+    const [m]=await c.client.getMessages(c.ent,{ids:[mid]});
+    if(!m)throw new Error('Audio non trovato');
+    const buf=await withTimeout(c.client.downloadMedia(m,{progressCallback:onProgress&&((d,t)=>{const x=Number(d)/Number(t);if(isFinite(x))onProgress(Math.min(1,x))})}),900000,'TIMEOUT_DOWNLOAD');
+    const bl=new Blob([buf],{type:'audio/mpeg'});
+    await idbSet(k,bl);return bl;
+  });
+}
+async function hasAudioLocal(id,n){return !!(await idbGet('aud:'+id+':'+n))}
+async function delAudio(id){
+  return run(async c=>{
+    if(!idx.has(id))await _list(c);
+    const o=audioOf(id),ids=Object.values(o);
+    if(ids.length)await c.client.deleteMessages(c.ent,ids,{revoke:true});
+    for(const n of Object.keys(o))idbDel('aud:'+id+':'+n);
+    audIdx.delete(id);setAudioCache(id,{});
+  });
 }
 
 /* ---------- copertine ----------
@@ -339,6 +389,6 @@ async function menu(){
   card.append(b,cm,x,k);
 }
 
-window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),logout,menu};
+window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),putAudio:wrap(putAudio),getAudio:wrap(getAudio),hasAudioLocal,delAudio:wrap(delAudio),audioOf,logout,menu};
 ledUpdate();
 window.dispatchEvent(new Event('sbtg-load'));
