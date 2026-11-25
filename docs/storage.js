@@ -133,6 +133,33 @@ const covIdx=new Map();   /* id libro → id del messaggio con la copertina (c<i
 const audIdx=new Map();   /* id libro → {indice capitolo → id del messaggio audio a<id>_<NNN>.mp3} */
 const fname=m=>(m.file&&m.file.name)||((m.document&&m.document.attributes)||[]).find(a=>a.className==='DocumentAttributeFilename')?.fileName||'';
 const saveCache=l=>{try{localStorage.setItem('sb_cat',JSON.stringify(l))}catch(e){}};
+const readCache=()=>{try{return JSON.parse(localStorage.getItem('sb_cat')||'[]')}catch(e){return[]}};
+/*CAP-START*/
+/* Didascalia del messaggio del libro: titolo, autore e, se note, genere, durata e trama (una riga ciascuno). Limite Telegram: 1024 caratteri. */
+const CAPMAX=1000;
+function parseCap(text){
+  const L=String(text||'').split('\n'),e={title:L[0]||'',author:L[1]||'',genres:[],minutes:0,synopsis:''};
+  for(const l of L.slice(2)){
+    if(l.startsWith('g:'))e.genres=l.slice(2).split(',').map(x=>x.trim()).filter(Boolean);
+    else if(l.startsWith('m:'))e.minutes=+l.slice(2)||0;
+    else if(l.startsWith('s:'))e.synopsis=l.slice(2).trim();
+  }
+  return e;
+}
+function buildCap(e){
+  const o1=s=>String(s||'').replace(/\s+/g,' ').trim();
+  let cap=o1(e.title).slice(0,150)+'\n'+o1(e.author).slice(0,100);
+  if((e.genres||[]).length)cap+='\ng:'+e.genres.join(', ').slice(0,90);
+  if(e.minutes)cap+='\nm:'+Math.round(e.minutes);
+  const room=CAPMAX-cap.length-3;
+  if(e.synopsis&&room>60){
+    let t=o1(e.synopsis);
+    if(t.length>room){t=t.slice(0,room-1);const k=Math.max(t.lastIndexOf('. '),t.lastIndexOf(' '));t=(k>room*.6?t.slice(0,k):t).replace(/[,;:\s]+$/,'')+'…'}
+    cap+='\ns:'+t;
+  }
+  return cap;
+}
+/*CAP-END*/
 function cached(){
   try{const l=JSON.parse(localStorage.getItem('sb_cat')||'[]');l.forEach(b=>{idx.set(b.id,b.msg);if(b.cover)covIdx.set(b.id,b.cover);if(b.audio&&Object.keys(b.audio).length)audIdx.set(b.id,b.audio)});queueMicrotask(()=>sweep(l));return l}
   catch(e){return[]}
@@ -149,8 +176,8 @@ async function _list({client,ent}){
   }
   for(const m of ms){
     const name=fname(m);if(!/^b[0-9a-z]+\.json$/i.test(name))continue;
-    const id=name.slice(0,-5),[t,a]=String(m.message||'').split('\n');
-    out.push({id,title:t||id,author:a||'',added:(m.date||0)*1000,msg:m.id,cover:covs.get(id)||0,audio:auds.get(id)||null});
+    const id=name.slice(0,-5),e=parseCap(m.message);
+    out.push({id,title:e.title||id,author:e.author,added:(m.date||0)*1000,msg:m.id,cover:covs.get(id)||0,audio:auds.get(id)||null,genres:e.genres,minutes:e.minutes,synopsis:e.synopsis});
     idx.set(id,m.id);if(covs.get(id))covIdx.set(id,covs.get(id));if(auds.get(id))audIdx.set(id,auds.get(id));
   }
   saveCache(out);annuncia(out);queueMicrotask(()=>sweep(out));return out;
@@ -184,10 +211,10 @@ async function put(b,onProgress){
     const body=JSON.stringify({title:b.title,author:b.author,chapters:b.chapters});
     const file=new File([body],b.id+'.json',{type:'application/json'});
     if(file.size>1.9e9)throw new Error('Libro troppo grande');
-    const caption=one(b.title).slice(0,200)+'\n'+one(b.author).slice(0,120);
+    const caption=buildCap(b);
     const msg=await tgSendFile(tg,client,ent,file,p=>{if(onProgress)onProgress(typeof p==='number'?p:0)},caption);
     idx.set(b.id,msg.id);
-    const l=cached().filter(x=>x.id!==b.id);l.push({id:b.id,title:b.title,author:b.author||'',added:b.added,msg:msg.id,cover:0});saveCache(l);
+    const l=readCache().filter(x=>x.id!==b.id);l.push({id:b.id,title:b.title,author:b.author||'',added:b.added,msg:msg.id,cover:0,audio:null,genres:b.genres||[],minutes:b.minutes||0,synopsis:b.synopsis||''});saveCache(l);
   });
 }
 async function del(id){
@@ -195,7 +222,7 @@ async function del(id){
     if(!idx.has(id))await _list(c);
     const ids=[idx.get(id),covIdx.get(id),...Object.values(audIdx.get(id)||{})].filter(Boolean);
     if(ids.length)await c.client.deleteMessages(c.ent,ids,{revoke:true});
-    idx.delete(id);covIdx.delete(id);saveCache(cached().filter(x=>x.id!==id));
+    idx.delete(id);covIdx.delete(id);saveCache(readCache().filter(x=>x.id!==id));
     idbDel(id);if(urls[id]){URL.revokeObjectURL(urls[id]);delete urls[id]}
     for(const n of Object.keys(audIdx.get(id)||{}))idbDel('aud:'+id+':'+n);audIdx.delete(id);
   });
@@ -211,7 +238,7 @@ async function logout(){
    come a<id libro>_<NNN>.mp3 e abbinati al capitolo dal numero. Dopo il primo ascolto restano nel browser. */
 const pad3=n=>String(n).padStart(3,'0');
 const audioOf=id=>audIdx.get(id)||{};
-const setAudioCache=(id,o)=>{const l=cached().map(x=>x.id===id?{...x,audio:Object.keys(o).length?o:null}:x);saveCache(l);annuncia(l)};
+const setAudioCache=(id,o)=>{const l=readCache().map(x=>x.id===id?{...x,audio:Object.keys(o).length?o:null}:x);saveCache(l);annuncia(l)};
 async function putAudio(id,n,file,onProgress,title){
   return run(async({client,tg,ent})=>{
     if(!idx.has(id))await _list({client,ent});
@@ -265,15 +292,11 @@ const toks=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u03
 const simil=(a,b)=>{const A=toks(a),B=new Set(toks(b));return A.length?A.filter(w=>B.has(w)).length/A.length:0};   /* quanto il titolo trovato somiglia a quello cercato */
 const enc=encodeURIComponent;
 
-async function daGoogleBooks(title,author){
-  for(const q of [author?`intitle:${title} inauthor:${author}`:'',`intitle:${title}`].filter(Boolean)){
-    const j=await getJSON('https://www.googleapis.com/books/v1/volumes?printType=books&maxResults=8&fields=items(volumeInfo(title,imageLinks))&q='+enc(q));
-    for(const it of j.items||[]){
-      const v=it.volumeInfo||{},l=v.imageLinks;if(!l||simil(title,v.title)<.6)continue;
-      const u=(l.thumbnail||l.smallThumbnail||'').replace(/^http:/,'https:').replace(/&edge=curl/,'');if(!u)continue;
-      try{return await getImg(u.replace(/zoom=\d/,'zoom=0'))}catch(e){}
-      return await getImg(u);
-    }
+async function daGoogleBooks(title,author,lang){
+  for(const v of (await googleCandidates(title,author,lang)).filter(x=>x.imageLinks).slice(0,3)){
+    const l=v.imageLinks,u=(l.thumbnail||l.smallThumbnail||'').replace(/^http:/,'https:').replace(/&edge=curl/,'');if(!u)continue;
+    try{return await getImg(u.replace(/zoom=\d/,'zoom=0'))}catch(e){}
+    try{return await getImg(u)}catch(e){}
   }
   return null;
 }
@@ -287,9 +310,105 @@ async function daOpenLibrary(title,author){
   }
   return null;
 }
-async function cercaOnline(title,author){
+/* ---------- scheda del libro: genere, trama (durata: calcolata dal testo) ---------- */
+/*META-START*/
+const GEN=[[/science fiction|sci-fi|fantascienza/i,'Fantascienza'],[/thriller|suspense/i,'Thriller'],[/mystery|detective|crime|giallo|noir/i,'Giallo'],[/romance|love stor/i,'Romance'],[/fantasy/i,'Fantasy'],[/horror/i,'Horror'],
+ [/biograph|memoir|autobiograph/i,'Biografia'],[/histor|storia/i,'Storia'],[/psycholog/i,'Psicologia'],[/philosoph|filosofia/i,'Filosofia'],[/self-help|self help|personal growth|personal development/i,'Crescita personale'],
+ [/business|econom|financ|management/i,'Economia'],[/religio|spiritual|christian|bible/i,'Spiritualità'],[/poetry|poem|poesia/i,'Poesia'],[/drama|theat|\bplays?\b/i,'Teatro'],[/juvenile|young adult|children|ragazzi/i,'Ragazzi'],
+ [/cook|food|cucina/i,'Cucina'],[/science|nature|mathemat/i,'Scienza'],[/health|fitness|medical/i,'Salute'],[/travel|viaggi/i,'Viaggi'],[/\bart\b|design|photograph/i,'Arte'],[/humor|comedy|umorismo/i,'Umorismo'],
+ [/comic|graphic novel|fumetti/i,'Fumetti'],[/classic/i,'Classici'],[/literary|literature|essays|saggi/i,'Letteratura'],[/adventure|avventura/i,'Avventura'],[/\bwar\b|military/i,'Guerra'],
+ [/politic|social science|sociolog/i,'Società e politica'],[/education|teaching/i,'Istruzione'],[/fiction|novel|stories|narrativa/i,'Narrativa']];
+/* "Fiction / Thrillers / Suspense" → ['Thriller','Narrativa']; onlyKnown scarta le etichette che non conosciamo */
+function itGenres(raw,onlyKnown){
+  const out=[];
+  for(const r of raw||[])for(const part of String(r).split(/\s*\/\s*|\s*,\s*/)){
+    const p=part.trim();if(!p||/^(general|large type|accessible|protected|in library|lending|open library|reading level)/i.test(p))continue;
+    const hit=GEN.find(([re])=>re.test(p));
+    const label=hit?hit[1]:(!onlyKnown&&p.length<=24?p[0].toUpperCase()+p.slice(1):'');
+    if(label&&!out.includes(label))out.push(label);
+  }
+  out.sort((a,b)=>(a==='Narrativa')-(b==='Narrativa'));   /* «Narrativa» è generico: in coda */
+  return out.slice(0,4);
+}
+function pulisciTrama(h){
+  return String(h||'').replace(/<br\s*\/?>|<\/p>|<\/li>/gi,' ').replace(/<[^>]+>/g,' ')
+    .replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&[a-z#0-9]+;/gi,' ')
+    .replace(/\s+/g,' ').trim();
+}
+function cutTrama(t,max){   /* taglia a fine frase */
+  t=String(t||'').trim();if(t.length<=max)return t;
+  const c=t.slice(0,max),k=Math.max(c.lastIndexOf('. '),c.lastIndexOf('! '),c.lastIndexOf('? '));
+  return (k>max*.55?c.slice(0,k+1):c.replace(/\s+\S*$/,'').replace(/[,;:]+$/,'')+'…');
+}
+/*META-END*/
+const gbCache=new Map();
+/* volumi di Google Books che somigliano al titolo, i migliori per primi: lingua preferita, autore giusto, con trama, con copertina */
+async function googleCandidates(title,author,lang){
+  const key=title+'|'+author+'|'+lang;if(gbCache.has(key))return gbCache.get(key);
+  let out=[];
+  for(const q of [author?`intitle:${title} inauthor:${author}`:'',`intitle:${title}`].filter(Boolean)){
+    const j=await getJSON('https://www.googleapis.com/books/v1/volumes?printType=books&maxResults=10&fields=items(volumeInfo(title,authors,categories,description,pageCount,language,imageLinks))&q='+enc(q));
+    out=(j.items||[]).map(i=>i.volumeInfo||{}).filter(v=>simil(title,v.title)>=.6);
+    if(out.length)break;
+  }
+  const at=new Set(toks(author));
+  const pt=v=>(lang&&v.language===lang?4:0)+((v.authors||[]).some(a=>toks(a).some(w=>at.has(w)))?3:0)+(v.description?2:0)+(v.imageLinks?1:0);
+  out.sort((a,b)=>pt(b)-pt(a));
+  gbCache.set(key,out);return out;
+}
+async function metaOpenLibrary(title,author){
+  const out={genres:[],synopsis:''};
+  const j=await getJSON('https://openlibrary.org/search.json?limit=6&fields=key,title,subject&'+(author?`title=${enc(title)}&author=${enc(author)}`:`title=${enc(title)}`));
+  const d=(j.docs||[]).find(x=>simil(title,x.title)>=.6);if(!d)return out;
+  out.genres=itGenres((d.subject||[]).slice(0,15),true);
+  if(d.key){const w=await getJSON('https://openlibrary.org'+d.key+'.json'),t=typeof w.description==='string'?w.description:w.description&&w.description.value;if(t)out.synopsis=pulisciTrama(t)}
+  return out;
+}
+/* → {genres:[…], synopsis:'…'}: Google Books, poi Open Library per ciò che manca */
+async function cercaMeta(title,author,lang){
+  const m={genres:[],synopsis:''};
+  try{
+    for(const v of await googleCandidates(one(title),one(author),lang)){
+      if(!m.genres.length&&v.categories)m.genres=itGenres(v.categories);
+      if(!m.synopsis&&v.description){const t=pulisciTrama(v.description);if(t.length>=60)m.synopsis=t}
+      if(m.genres.length&&m.synopsis)break;
+    }
+  }catch(e){console.warn('Scheda Google Books: '+((e&&e.message)||e))}
+  if(!m.genres.length||!m.synopsis){
+    try{const o=await metaOpenLibrary(one(title),one(author));if(!m.genres.length)m.genres=o.genres;if(!m.synopsis)m.synopsis=o.synopsis}
+    catch(e){console.warn('Scheda Open Library: '+((e&&e.message)||e))}
+  }
+  m.synopsis=cutTrama(m.synopsis,560);
+  return m;
+}
+/* salva genere/durata/trama: nel catalogo locale e nella didascalia del messaggio su Telegram (così li ritrovi su ogni dispositivo) */
+async function setMeta(id,p){
+  const cur=readCache().find(x=>x.id===id);if(!cur)return;
+  const e={...cur,...p},l=readCache().map(x=>x.id===id?e:x);
+  saveCache(l);annuncia(l);
+  const mid=idx.get(id)||cur.msg;
+  if(!mid||!hasSession()||!tgConfigured())return;
+  try{await run(async({client,ent})=>{await client.editMessage(ent,{message:mid,text:buildCap(e)})})}
+  catch(err){console.warn('Scheda non salvata su Telegram: '+((err&&err.message)||err))}
+}
+const triedMeta=()=>{try{return JSON.parse(localStorage.getItem('sb_meta_try')||'{}')}catch(e){return{}}};
+/* cerca genere e trama se mancano; con force lo fa anche se già provato di recente */
+async function applicaMeta(b,force){
+  const e=readCache().find(x=>x.id===b.id)||b;
+  const manca=!(e.genres&&e.genres.length)||!e.synopsis;
+  if(!manca&&!force)return false;
+  const tr=triedMeta(),now=Date.now();
+  if(!force&&tr[b.id]&&now-tr[b.id]<3*864e5)return false;
+  tr[b.id]=now;try{localStorage.setItem('sb_meta_try',JSON.stringify(tr))}catch(x){}
+  const m=await cercaMeta(b.title,b.author,b.lang||'it'),p={};
+  if(!(e.genres&&e.genres.length)&&m.genres.length)p.genres=m.genres;
+  if(!e.synopsis&&m.synopsis)p.synopsis=m.synopsis;
+  if(!Object.keys(p).length)return false;
+  await setMeta(b.id,p);return true;
+}
+async function cercaOnline(title,author,lang){
   for(const [nome,f] of [['Google Books',daGoogleBooks],['Open Library',daOpenLibrary]]){
-    try{const bl=await f(one(title),one(author));if(bl)return {blob:bl,src:nome}}
+    try{const bl=await f(one(title),one(author),lang);if(bl)return {blob:bl,src:nome}}
     catch(e){console.warn('Copertina '+nome+': '+((e&&e.message)||e))}
   }
   return null;
@@ -316,7 +435,7 @@ async function salvaCopertina(b,jpg){
     const file=new File([jpg],'c'+b.id+'.jpg',{type:'image/jpeg'});
     const msg=await tgSendFile(tg,client,ent,file,()=>{},'Copertina: '+one(b.title).slice(0,150));
     covIdx.set(b.id,msg.id);
-    saveCache(cached().map(x=>x.id===b.id?{...x,cover:msg.id}:x));
+    saveCache(readCache().map(x=>x.id===b.id?{...x,cover:msg.id}:x));
   });
   await idbSet(b.id,jpg);mostra(b.id,jpg);
 }
@@ -324,16 +443,17 @@ const lavoro=new Set();   /* libri per cui è già in corso la ricerca */
 /* b = {id,title,author}; embedded = copertina contenuta nell'EPUB (Blob), usata se online non si trova nulla.
    Restituisce 'Google Books', 'Open Library', 'epub' oppure null se non è stato possibile trovarne una. */
 async function cover(b,embedded){
-  if(lavoro.has(b.id))return null;
+  if(lavoro.has(b.id))return {src:null,meta:false};
   lavoro.add(b.id);
   try{
-    const online=await cercaOnline(b.title,b.author);
+    let meta=false;try{meta=await applicaMeta(b)}catch(e){console.warn('Scheda «'+b.title+'»: '+((e&&e.message)||e))}
+    const online=await cercaOnline(b.title,b.author,b.lang||'it');
     const cand=[online&&[online.blob,online.src],embedded&&[embedded,'epub']].filter(Boolean);
     for(const [blob,src] of cand){
       let jpg;try{jpg=await preparaImmagine(blob)}catch(e){console.warn('Copertina scartata ('+src+'): '+e.message);continue}
-      await salvaCopertina(b,jpg);return src;
+      await salvaCopertina(b,jpg);return {src,meta};
     }
-    return null;
+    return {src:null,meta};
   }finally{lavoro.delete(b.id)}
 }
 /* all'avvio e a ogni aggiornamento del catalogo: mostra le copertine già salvate e cerca quelle che mancano */
@@ -366,9 +486,15 @@ async function sweep(list){
       tr[b.id]=now;try{localStorage.setItem('sb_cov_try',JSON.stringify(tr))}catch(e){}
       try{await cover(b,null)}catch(e){console.warn('Copertina «'+b.title+'»: '+((e&&e.message)||e));break}
     }
+    for(const b of list){                                  /* libri con copertina ma senza genere/trama */
+      if(lavoro.has(b.id)||((b.genres&&b.genres.length)&&b.synopsis))continue;
+      lavoro.add(b.id);
+      try{await applicaMeta(b)}catch(e){console.warn('Scheda «'+b.title+'»: '+((e&&e.message)||e))}
+      finally{lavoro.delete(b.id)}
+    }
   }finally{sweeping=false;if(again){const l=again;again=null;sweep(l)}}
 }
-function cercaMancanti(){try{localStorage.removeItem('sb_cov_try')}catch(e){}sweep(cached())}
+function cercaMancanti(){try{localStorage.removeItem('sb_cov_try');localStorage.removeItem('sb_meta_try')}catch(e){}sweep(readCache())}
 
 /* ---------- tocco sul pallino ---------- */
 const listW=wrap(list);
@@ -389,6 +515,6 @@ async function menu(){
   card.append(b,cm,x,k);
 }
 
-window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),putAudio:wrap(putAudio),getAudio:wrap(getAudio),hasAudioLocal,delAudio:wrap(delAudio),audioOf,logout,menu};
+window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),setMeta:wrap(setMeta),enrich:wrap(b=>applicaMeta(b,true)),putAudio:wrap(putAudio),getAudio:wrap(getAudio),hasAudioLocal,delAudio:wrap(delAudio),audioOf,logout,menu};
 ledUpdate();
 window.dispatchEvent(new Event('sbtg-load'));
