@@ -28,6 +28,11 @@ h2{font-size:18px;margin:22px 0 10px}
 .chip{flex:none;border:1px solid var(--line);border-radius:16px;padding:6px 12px;font-size:13px;background:var(--card);color:var(--fg);white-space:nowrap}.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .tag{display:inline-block;border:1px solid var(--line);border-radius:14px;padding:4px 10px;font-size:12px;background:var(--card);color:var(--fg)}
 .sheet .chip.on{color:#fff;font-weight:400}
+.cv{position:relative}
+.dl{position:absolute;right:6px;bottom:6px;width:22px;height:22px;border-radius:50%;background:#2E9E5B;color:#fff;font:700 13px/22px system-ui,sans-serif;text-align:center;box-shadow:0 0 0 2px rgba(255,255,255,.9)}
+.mini .dl,.hero .dl{display:none}
+.row2{display:flex;gap:8px}.row2 .go{width:auto;flex:1}
+.go.alt{background:var(--card);color:var(--fg);border:1px solid var(--line)}
 .go{display:block;width:100%;margin-top:8px;padding:13px;border-radius:24px;background:var(--acc);color:#fff;font-weight:700;text-align:center}
 .mut{color:var(--mut)}
 .opt{position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;line-height:20px;font-size:16px}
@@ -44,6 +49,7 @@ nav button{flex:1;padding:10px 0;font-size:11px;color:var(--mut)}nav button span
 .mini .cv{width:42px;padding:3px;font-size:0}.mini .cv b,.mini .cv i{display:none}
 .mini .t{flex:1;min-width:0;cursor:pointer}.mini .t b,.mini .t small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mini small{color:var(--mut)}
 .mini button{font-size:22px;width:44px;color:var(--acc)}
+.mini #mx{font-size:17px;width:34px;color:var(--mut)}
 .pl{position:fixed;inset:0;background:var(--bg);z-index:20;transform:translateY(100%);transition:transform .3s;padding:calc(12px + env(safe-area-inset-top,0px)) 20px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;overflow:auto}
 .pl.open{transform:none}
 .pl .hd{display:flex;justify-content:space-between;align-items:center;color:var(--mut);font-size:13px}
@@ -67,7 +73,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 <body>
 <div class="top"><div class="logo">storybooks</div><div style="display:flex;align-items:center;gap:12px"><label class="add">+ Aggiungi libri<input id="file" type="file" multiple accept=".epub,.txt,.md,.html,.htm" hidden></label><button id="tgout" class="led" data-s="busy" title="Telegram" aria-label="Stato Telegram"><i></i></button></div></div>
 <main id="main"></main>
-<div class="mini" id="mini"><div id="mcv" style="width:42px"></div><div class="t" id="mt"><b></b><small></small></div><button id="mplay">▶</button></div>
+<div class="mini" id="mini"><div id="mcv" style="width:42px"></div><div class="t" id="mt"><b></b><small></small></div><button id="mplay">▶</button><button id="mx" aria-label="Chiudi il lettore" title="Chiudi">✕</button></div>
 <nav><button data-v="home" class="on"><span>⌂</span>Home</button><button data-v="search"><span>⌕</span>Cerca</button><button data-v="lib"><span>▤</span>Libreria</button></nav>
 <div class="pl" id="pl">
  <div class="hd"><button id="close">⌄</button><span>In riproduzione</span><span style="width:26px"></span></div>
@@ -160,7 +166,9 @@ const covers={};   /* id libro → indirizzo locale della copertina */
 const cover=(b,x='')=>{const h=hue(b.title),bg=`linear-gradient(145deg,hsl(${h} 60% 42%),hsl(${(h+40)%360} 65% 26%))`;
   if(covers[b.id])return `<div class="cv ${x}" style="background:${bg};padding:0"><img class="cvi" src="${covers[b.id]}" alt="${esc(b.title)}"></div>`;
   return `<div class="cv ${x}" style="background:${bg}"><b>${esc(b.title)}</b><i>${esc(b.author||'')}</i></div>`};
-const card=(b,d)=>`<div class="card" data-id="${b.id}">${cover(b)}<p>${esc(b.title)}</p><small>${esc(b.author||'Autore sconosciuto')}${b.minutes?' · '+fmtDur(b.minutes):''}${audCount(b.id)?' · 🎧':''}</small>${d?'<button class="opt" data-opt="'+b.id+'" title="Audio narrato e altro">⋯</button><button class="del" data-del="'+b.id+'">×</button>':''}</div>`;
+const isDl=id=>!!(window.SBTG&&SBTG.isDownloaded&&SBTG.isDownloaded(id));
+const fmtMB=n=>n>=1e9?(n/1e9).toFixed(1).replace('.',',')+' GB':n>=1e6?(n/1e6).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(n/1e3))+' KB';
+const card=(b,d)=>`<div class="card" data-id="${b.id}">${isDl(b.id)?cover(b).replace(/<\/div>$/,'<span class="dl" title="Scaricato: funziona anche offline">⬇</span></div>'):cover(b)}<p>${esc(b.title)}</p><small>${esc(b.author||'Autore sconosciuto')}${b.minutes?' · '+fmtDur(b.minutes):''}${audCount(b.id)?' · 🎧':''}</small>${d?'<button class="opt" data-opt="'+b.id+'" title="Audio narrato e altro">⋯</button><button class="del" data-del="'+b.id+'">×</button>':''}</div>`;
 const emptyBox=`<div class="empty"><b>La tua libreria è vuota</b>Tocca «Aggiungi libri» e carica file EPUB, TXT, HTML o Markdown.<br>Compariranno qui e potrai ascoltarli subito.</div>`;
 /* ---------- audio narrato: esporta il testo, carica gli MP3 ---------- */
 let audioBook=null;
@@ -261,17 +269,30 @@ function render(){
 /* scheda del libro: trama, genere, durata; da qui si decide se ascoltare */
 function showBook(id){
   const b=books.find(x=>x.id===id);if(!b)return;
-  const pc=Math.round((prog(id).pc||0)*100);
+  const pc=Math.round((prog(id).pc||0)*100),dl=isDl(id),di=dl&&SBTG.downloadInfo(id);
   const gen=(b.genres||[]).map(g=>`<span class="tag">${esc(g)}</span>`).join('');
   const itOk=!b.synopsis||b.lang==='en'||!(window.SBTG&&SBTG.isItalian)||SBTG.isItalian(b.synopsis);
   sheet(`<div style="display:flex;gap:14px;align-items:flex-start"><div style="width:110px;flex:none">${cover(b)}</div><div style="min-width:0"><h3 style="margin:0 0 4px">${esc(b.title)}</h3><div class="mut">${esc(b.author||'Autore sconosciuto')}</div>
     <div class="mut" style="margin:8px 0;font-size:13px">${b.minutes?'⏱ circa '+fmtDur(b.minutes)+' di ascolto':'⏱ durata non ancora calcolata'}${audCount(b.id)?' · 🎧 audio narrato':''}</div>
     <div class="chips" style="flex-wrap:wrap;overflow:visible">${gen}</div></div></div>
     ${b.synopsis?`<p style="line-height:1.5;font-size:14px;margin:14px 0">${esc(b.synopsis)}</p>${itOk?'':'<button class="it" data-a="info">🔎 Cerca la trama in italiano</button>'}`:`<p class="mut" style="font-size:14px;margin:14px 0">Trama e genere non ancora trovati.</p><button class="it" data-a="info">🔎 Cerca trama e genere</button>`}
-    <button class="go" data-a="play">${pc>0&&pc<98?'▶ Riprendi · '+pc+'%':'▶ Ascolta'}</button>`);
+    <div class="row2"><button class="go" data-a="play">${pc>0&&pc<98?'▶ Riprendi · '+pc+'%':'▶ Riproduci'}</button><button class="go alt" data-a="${dl?'ok':'dl'}">${dl?'✓ Scaricato':'⬇ Scarica'}</button></div>
+    ${dl?`<p class="mut" style="font-size:12px;line-height:1.45;margin:10px 0 0">Salvato sul dispositivo (${fmtMB(di.bytes)}${di.audio?' · con audio narrato':''}): lo ascolti anche senza internet.</p><button class="it" data-a="rm">🗑 Rimuovi il download</button>`:''}`);
   $('#sheet').onclick=async e=>{
     const x=e.target.closest('[data-a]');if(!x)return;
     if(x.dataset.a==='play'){$('#scrim').click();openBook(id)}
+    else if(x.dataset.a==='dl'){
+      if(!navigator.onLine){toast('Serve internet per scaricare il libro');return}
+      x.disabled=true;x.textContent='Scarico… 0%';
+      try{await sbReady();const r=await SBTG.download(b.id,p=>{x.textContent='Scarico… '+Math.round(p*100)+'%'});toast('Libro scaricato ('+fmtMB(r.bytes)+'): ora funziona anche offline');refresh()}
+      catch(err){toast('Download non riuscito: '+err.message)}
+      if($('#sheet').style.display==='block')showBook(id);
+    }
+    else if(x.dataset.a==='rm'){
+      if(!confirm('Rimuovere il download? Il libro resta nella libreria e si scarica di nuovo quando serve.'))return;
+      try{await sbReady();await SBTG.removeDownload(id);toast('Download rimosso');refresh()}catch(err){toast('Errore: '+err.message)}
+      showBook(id);
+    }
     else if(x.dataset.a==='info'){
       x.textContent='Cerco…';
       try{await sbReady();const ok=await SBTG.enrich({id:b.id,title:b.title,author:b.author,lang:b.lang});toast(ok?'Scheda aggiornata':'Nessuna informazione trovata online')}catch(err){toast('Ricerca non riuscita: '+err.message)}
@@ -511,6 +532,12 @@ function ui(){
 }
 $('#pp').onclick=$('#mplay').onclick=()=>playing?pause():play();
 $('#mt').onclick=()=>$('#pl').classList.add('open');
+$('#mx').onclick=e=>{   /* ✕: ferma, chiude il lettore (il libro resta in «Continua ad ascoltare») */
+  e.stopPropagation();pause();cur=null;segs=[];
+  $('#mini').style.display='none';$('#pl').classList.remove('open');
+  try{if('mediaSession' in navigator){navigator.mediaSession.metadata=null;navigator.mediaSession.playbackState='none'}}catch(x){}
+  refresh();
+};
 $('#close').onclick=()=>$('#pl').classList.remove('open');
 $('#seek').onchange=e=>{if(useAudio()){if(au.duration){au.currentTime=e.target.value/1000*au.duration;aTick(true)}}else jump(ci,Math.round(e.target.value/1000*(segs.length-1)))};
 $('#bk').onclick=()=>useAudio()?aSeekBy(-15):jump(ci,si-4);$('#fw').onclick=()=>useAudio()?aSeekBy(15):jump(ci,si+4);

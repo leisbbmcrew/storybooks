@@ -52,9 +52,9 @@ function avviso(title,msg,dett,btn,close){
 const dettagli=e=>[shimError&&('Buffer: '+shimError),libSource&&('Libreria: '+libSource),...(e&&e.details||[]),...consoleLog.slice(-5)].filter(Boolean).join('\n');
 
 /* ---------- pallino di stato ---------- */
-const LED={ok:['#2E9E5B','Sincronizzato con Telegram'],busy:['#E0A800','Sincronizzazione in corso…'],err:['#D93025','Problema di sincronizzazione'],off:['#8A94A6','Telegram non collegato: tocca per collegare']};
+const LED={net:['#8A94A6','Offline: puoi ascoltare i libri scaricati'],ok:['#2E9E5B','Sincronizzato con Telegram'],busy:['#E0A800','Sincronizzazione in corso…'],err:['#D93025','Problema di sincronizzazione'],off:['#8A94A6','Telegram non collegato: tocca per collegare']};
 let busyN=0,lastErr='',verified=false;
-const ledState=()=>!tgConfigured()||!hasSession()?'off':lastErr?'err':(busyN>0||!verified)?'busy':'ok';
+const ledState=()=>!tgConfigured()||!hasSession()?'off':!navigator.onLine?'net':lastErr?'err':(busyN>0||!verified)?'busy':'ok';
 function ledUpdate(){
   const b=document.getElementById('tgout');if(!b)return;
   const s=ledState(),c=LED[s];
@@ -205,6 +205,7 @@ async function heal(list){
 }
 async function list(){
   for(;;){
+    if(!navigator.onLine)return cached();            /* offline: catalogo salvato, senza finestre di errore */
     try{return await run(_list)}
     catch(e){
       const m=(e&&e.message)||'';
@@ -216,15 +217,22 @@ async function list(){
     }
   }
 }
-async function get(id,onProgress){
+async function getRemote(id,onProgress){
   return run(async c=>{
     if(!idx.has(id))await _list(c);
     const mid=idx.get(id);if(!mid)throw new Error('Libro non trovato nel gruppo');
     const [m]=await c.client.getMessages(c.ent,{ids:[mid]});
     if(!m)throw new Error('Libro non trovato nel gruppo');
-    const buf=await withTimeout(c.client.downloadMedia(m,{progressCallback:onProgress}),300000,'TIMEOUT_DOWNLOAD');
+    const buf=await withTimeout(c.client.downloadMedia(m,{progressCallback:onProgress&&((d,t)=>{const x=Number(d)/Number(t);if(isFinite(x))onProgress(Math.min(1,x))})}),300000,'TIMEOUT_DOWNLOAD');
     return JSON.parse(new TextDecoder().decode(buf));
   });
+}
+const OFFLINE_MSG='Sei offline: scarica il libro per ascoltarlo senza internet';
+/* un libro scaricato si apre dal dispositivo, senza Telegram e senza internet */
+async function get(id,onProgress){
+  const hit=await idbGet('book:'+id);if(hit)return hit;
+  if(!navigator.onLine)throw new Error(OFFLINE_MSG);
+  return getRemote(id,onProgress);
 }
 const one=s=>String(s||'').replace(/\s+/g,' ').trim();
 async function put(b,onProgress){
@@ -245,6 +253,7 @@ async function del(id){
     if(ids.length)await c.client.deleteMessages(c.ent,ids,{revoke:true});
     idx.delete(id);covIdx.delete(id);saveCache(readCache().filter(x=>x.id!==id));
     idbDel(id);if(urls[id]){URL.revokeObjectURL(urls[id]);delete urls[id]}
+    idbDel('book:'+id);{const d=dlGet();delete d[id];dlSet(d)}
     for(const n of Object.keys(audIdx.get(id)||{}))idbDel('aud:'+id+':'+n);audIdx.delete(id);
   });
 }
@@ -275,6 +284,7 @@ async function putAudio(id,n,file,onProgress,title){
 async function getAudio(id,n,onProgress){
   const k='aud:'+id+':'+n,hit=await idbGet(k);
   if(hit)return hit;
+  if(!navigator.onLine)throw new Error(OFFLINE_MSG);
   return run(async c=>{
     let mid=audioOf(id)[n];
     if(!mid){await _list(c);mid=audioOf(id)[n]}
@@ -295,6 +305,39 @@ async function delAudio(id){
     for(const n of Object.keys(o))idbDel('aud:'+id+':'+n);
     audIdx.delete(id);setAudioCache(id,{});
   });
+}
+
+/* ---------- download per l'uso offline ----------
+   «Scarica» salva nel dispositivo (IndexedDB) il testo del libro e, se ci sono, i capitoli audio narrati.
+   Un libro scaricato si apre e si ascolta senza internet; l'icona sulla copertina lo indica. */
+const dlGet=()=>{try{return JSON.parse(localStorage.getItem('sb_dl')||'{}')}catch(e){return{}}};
+const dlSet=o=>{try{localStorage.setItem('sb_dl',JSON.stringify(o))}catch(e){}};
+const isDownloaded=id=>!!dlGet()[id];
+const downloadInfo=id=>dlGet()[id]||null;
+async function download(id,onProgress){
+  if(!navigator.onLine)throw new Error('Sei offline: serve internet per scaricare il libro');
+  const aud=Object.keys(audioOf(id)),total=1+aud.length;let done=0;
+  const rep=f=>{if(onProgress)onProgress(Math.min(1,(done+f)/total))};
+  rep(0);
+  let bk=await idbGet('book:'+id);
+  if(!bk){bk=await getRemote(id,rep);await idbSet('book:'+id,bk)}
+  done=1;rep(0);
+  let bytes=JSON.stringify(bk).length;
+  for(const n of aud){const bl=await getAudio(id,n,rep);bytes+=bl.size;done++;rep(0)}
+  const d=dlGet();d[id]={at:Date.now(),bytes,audio:aud.length};dlSet(d);
+  annuncia(readCache());
+  return {bytes};
+}
+async function removeDownload(id){
+  await idbDel('book:'+id);
+  for(const n of Object.keys(audioOf(id)))await idbDel('aud:'+id+':'+n);
+  const d=dlGet();delete d[id];dlSet(d);annuncia(readCache());
+}
+/* se il browser ha liberato lo spazio, l'icona di «scaricato» non deve restare */
+async function checkDownloads(){
+  const d=dlGet();let ch=false;
+  for(const id of Object.keys(d))if(!(await idbGet('book:'+id))){delete d[id];ch=true}
+  if(ch){dlSet(d);annuncia(readCache())}
 }
 
 /* ---------- copertine ----------
@@ -590,6 +633,11 @@ function cercaMancanti(){try{localStorage.removeItem('sb_cov_try');localStorage.
 const listW=wrap(list);
 async function menu(){
   const s=ledState();
+  if(s==='net'){
+    show();notaEl=null;
+    card.append(el('h2','Sei offline','margin:0 0 8px;font-size:20px'),el('p','Puoi ascoltare i libri scaricati. Il resto della libreria tornerà disponibile quando sei di nuovo online.','margin:0 0 12px;font-size:14px;line-height:1.45'));
+    const k=el('button','Chiudi',BTN);k.onclick=()=>ov.remove();card.appendChild(k);return;
+  }
   if(s==='off'){if(await login()){try{await listW()}catch(e){}}return}
   show();notaEl=null;
   const nome=accountLabel();
@@ -606,6 +654,9 @@ async function menu(){
   card.append(b,cm,x,k);
 }
 
-window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),setMeta:wrap(setMeta),enrich:wrap(b=>applicaMeta(b,true)),isItalian,putAudio:wrap(putAudio),getAudio:wrap(getAudio),hasAudioLocal,delAudio:wrap(delAudio),audioOf,logout,menu};
+window.SBTG={cached,list:listW,get:wrap(get),put:wrap(put),del:wrap(del),cover:wrap(cover),setMeta:wrap(setMeta),enrich:wrap(b=>applicaMeta(b,true)),isItalian,download:wrap(download),removeDownload,isDownloaded,downloadInfo,putAudio:wrap(putAudio),getAudio:wrap(getAudio),hasAudioLocal,delAudio:wrap(delAudio),audioOf,logout,menu};
 ledUpdate();
+addEventListener('offline',ledUpdate);
+addEventListener('online',()=>{ledUpdate();if(hasSession())listW().catch(()=>{})});
+checkDownloads();
 window.dispatchEvent(new Event('sbtg-load'));
