@@ -18,13 +18,25 @@ jobs:
           set -e
           mkdir -p /tmp/k && cd /tmp/k
           npm init -y >/dev/null
-          npm install kokoro-js@1.2.1 esbuild@0.24.0 --no-audit --no-fund
+          # --ignore-scripts: niente download di binari per Node (servono solo nel browser)
+          npm install kokoro-js@^1.2.0 esbuild@^0.24.0 --ignore-scripts --no-audit --no-fund
+          npm ls kokoro-js phonemizer @huggingface/transformers onnxruntime-web || true
           cat > entry.js <<'JS'
           export {KokoroTTS} from 'kokoro-js';
           export {phonemize} from 'phonemizer';
           export {env} from '@huggingface/transformers';
           JS
-          npx esbuild entry.js --bundle --format=esm --platform=browser --target=es2022 --minify --outfile=kokoro.bundle.js
+          cat > build.mjs <<'JS'
+          import {build} from 'esbuild';
+          // moduli di Node usati dalle librerie solo fuori dal browser: import statici → vuoti, dinamici → lasciati così
+          const NODE=/^(node:)?(fs|fs\/promises|path|url|os|crypto|stream|stream\/web|util|module|worker_threads|child_process|http|https|zlib|buffer|events)$/;
+          const stub={name:'stub-node',setup(b){
+            b.onResolve({filter:NODE},a=>a.kind==='dynamic-import'?{path:a.path,external:true}:{path:a.path,namespace:'stub'});
+            b.onLoad({filter:/.*/,namespace:'stub'},()=>({loader:'js',contents:'const s=new Proxy(function(){},{get:()=>()=>{}});export default s;export const fileURLToPath=u=>u,pathToFileURL=u=>u,join=(...a)=>a.join("/"),resolve=(...a)=>a.join("/"),dirname=p=>p,basename=p=>p,extname=()=>"",existsSync=()=>false,createRequire=()=>()=>({});'}));
+          }};
+          await build({entryPoints:['entry.js'],bundle:true,format:'esm',platform:'browser',target:'es2022',minify:true,outfile:'kokoro.bundle.js',plugins:[stub],logLevel:'info'});
+          JS
+          node build.mjs
           ls -l kokoro.bundle.js
           echo "--- onnxruntime-web"; find node_modules -type d -path '*onnxruntime-web/dist' | head
       - name: Copia i file nel sito e salva
