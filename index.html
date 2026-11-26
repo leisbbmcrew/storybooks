@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Storybooks</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mut:#6b6b6b;--card:#f3f1ee;--acc:#ff5a1f;--line:#e4e0db;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121212;--fg:#f4f2ef;--mut:#a09b95;--card:#1f1e1d;--line:#2d2b29;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121212;--fg:#f4f2ef;--mut:#a09b95;--card:#1f1e1d;--line:#2d2b29;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+.top{max-width:720px;margin:auto;display:flex;justify-content:space-between;align-items:center;padding:16px}
+.logo{font-weight:800;font-size:24px;color:var(--acc);letter-spacing:-.5px}
+.led{flex:none;width:30px;height:30px;padding:0;border:0;background:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.led i{display:block;width:13px;height:13px;border-radius:50%;background:var(--c,#E0A800);box-shadow:0 0 0 2px var(--bg),0 0 7px 1px var(--c,#E0A800)}.led[data-s=busy] i{animation:ledp 1s ease-in-out infinite}@keyframes ledp{50%{opacity:.35}}
+.add{background:var(--acc);color:#fff;border-radius:20px;padding:8px 16px;font-weight:600;cursor:pointer}
+main{max-width:720px;margin:auto;padding:0 16px 170px}
+h2{font-size:18px;margin:22px 0 10px}
+.shelf{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
+.card{flex:0 0 132px;cursor:pointer;position:relative}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:14px}
+.grid .card{flex:none}
+.cv{aspect-ratio:1;border-radius:10px;color:#fff;padding:10px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;width:100%}
+.cv .cvi{display:block;flex:1;min-height:0;width:100%;object-fit:contain}
+.cv b{font-size:14px;line-height:1.15}.cv i{font-size:11px;opacity:.85}
+.card p{margin:6px 0 0;font-weight:600;font-size:13px;line-height:1.2}.card small{color:var(--mut)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:8px 0 2px;-webkit-overflow-scrolling:touch}.chips:empty{display:none}
+.chip{flex:none;border:1px solid var(--line);border-radius:16px;padding:6px 12px;font-size:13px;background:var(--card);color:var(--fg);white-space:nowrap}.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:14px;padding:4px 10px;font-size:12px;background:var(--card);color:var(--fg)}
+.sheet .chip.on{color:#fff;font-weight:400}
+.cv{position:relative}
+.dl{position:absolute;right:6px;bottom:6px;width:22px;height:22px;border-radius:50%;background:#2E9E5B;color:#fff;font:700 13px/22px system-ui,sans-serif;text-align:center;box-shadow:0 0 0 2px rgba(255,255,255,.9)}
+.mini .dl,.hero .dl{display:none}
+.row2{display:flex;gap:8px}.row2 .go{width:auto;flex:1}
+.go.alt{background:var(--card);color:var(--fg);border:1px solid var(--line)}
+.go{display:block;width:100%;margin-top:8px;padding:13px;border-radius:24px;background:var(--acc);color:#fff;font-weight:700;text-align:center}
+.mut{color:var(--mut)}
+.opt{position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;line-height:20px;font-size:16px}
+.del{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.55);color:#fff;border-radius:50%;width:24px;height:24px;line-height:24px}
+.hero{display:flex;gap:14px;background:var(--card);border-radius:16px;padding:12px;align-items:center;cursor:pointer}
+.hero .cv{width:96px;flex:none}.hero div.t{flex:1;min-width:0}
+.bar{height:4px;background:var(--line);border-radius:2px;margin-top:8px}.bar i{display:block;height:100%;background:var(--acc);border-radius:2px}
+.empty{text-align:center;padding:48px 16px;color:var(--mut);border:2px dashed var(--line);border-radius:16px;margin-top:20px}
+.empty b{display:block;color:var(--fg);font-size:18px;margin-bottom:6px}
+input[type=search]{width:100%;padding:12px 16px;border-radius:24px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px);z-index:5}
+nav button{flex:1;padding:10px 0;font-size:11px;color:var(--mut)}nav button span{display:block;font-size:20px}nav .on{color:var(--acc)}
+.mini{position:fixed;left:8px;right:8px;bottom:calc(58px + env(safe-area-inset-bottom,0px));background:var(--card);border-radius:12px;display:none;align-items:center;gap:10px;padding:8px;z-index:6;box-shadow:0 2px 12px rgba(0,0,0,.2);max-width:704px;margin:auto}
+.mini .cv{width:42px;padding:3px;font-size:0}.mini .cv b,.mini .cv i{display:none}
+.mini .t{flex:1;min-width:0;cursor:pointer}.mini .t b,.mini .t small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mini small{color:var(--mut)}
+.mini button{font-size:22px;width:44px;color:var(--acc)}
+.mini #mx{font-size:17px;width:34px;color:var(--mut)}
+.pl{position:fixed;inset:0;background:var(--bg);z-index:20;transform:translateY(100%);transition:transform .3s;padding:calc(12px + env(safe-area-inset-top,0px)) 20px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;overflow:auto}
+.pl.open{transform:none}
+.pl .hd{display:flex;justify-content:space-between;align-items:center;color:var(--mut);font-size:13px}
+.pl .hd button{font-size:26px}
+.pl .big{width:min(64vw,300px);margin:12px auto}
+.pl h1{font-size:20px;margin:6px 0 0;text-align:center}.pl .au{text-align:center;color:var(--mut)}
+.now{margin:14px auto;max-width:560px;min-height:84px;text-align:center;font-size:17px;line-height:1.5;font-family:Georgia,serif}
+input[type=range]{width:100%;accent-color:var(--acc)}
+.lbl{display:flex;justify-content:space-between;color:var(--mut);font-size:12px}
+.ctl{display:flex;justify-content:center;align-items:center;gap:14px;margin:8px 0}
+.ctl button{font-size:24px;width:48px;height:48px}
+.ctl .play{background:var(--acc);color:#fff;border-radius:50%;width:68px;height:68px;font-size:28px}
+.row{display:flex;justify-content:space-around;margin-top:auto;padding-top:10px}
+.row button{font-size:13px;color:var(--mut);padding:8px}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:29;display:none}
+.sheet{position:fixed;left:0;right:0;bottom:0;max-height:70%;overflow:auto;background:var(--bg);border-radius:18px 18px 0 0;z-index:30;display:none;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));max-width:720px;margin:auto}
+.sheet h3{margin:0 0 8px}.sheet button.it{display:block;width:100%;text-align:left;padding:12px 4px;border-bottom:1px solid var(--line)}
+.sheet .on{color:var(--acc);font-weight:700}
+.toast{position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;z-index:600;display:none;font-size:13px}
+#boot{position:fixed;inset:0;z-index:500;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;transition:opacity .35s}
+#boot.out{opacity:0;pointer-events:none}
+#boot .logo{font-size:34px}
+#boot .bar{width:min(260px,70vw);height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+#boot .bar i{display:block;height:100%;width:0;background:var(--acc);border-radius:3px;transition:width .3s}
+#boot .st{font-size:13px;color:var(--mut);min-height:1.4em}
+#boot button{display:none;background:none;border:0;color:var(--acc);font:inherit;font-weight:600;cursor:pointer;padding:8px}
+#boot button.on{display:block}
+</style></head>
+<body>
+<div id="boot" role="status" aria-live="polite"><div class="logo">storybooks</div><div class="bar"><i id="bootbar"></i></div><div class="st" id="bootst">Avvio…</div><button id="bootgo">Continua comunque</button></div>
+<div class="top"><div class="logo">storybooks</div><div style="display:flex;align-items:center;gap:12px"><label class="add">+ Aggiungi libri<input id="file" type="file" multiple accept=".epub,.txt,.md,.html,.htm" hidden></label><button id="tgout" class="led" data-s="busy" title="Telegram" aria-label="Stato Telegram"><i></i></button></div></div>
+<main id="main"></main>
+<div class="mini" id="mini"><div id="mcv" style="width:42px"></div><div class="t" id="mt"><b></b><small></small></div><button id="mplay">▶</button><button id="mx" aria-label="Chiudi il lettore" title="Chiudi">✕</button></div>
+<nav><button data-v="home" class="on"><span>⌂</span>Home</button><button data-v="search"><span>⌕</span>Cerca</button><button data-v="lib"><span>▤</span>Libreria</button></nav>
+<div class="pl" id="pl">
+ <div class="hd"><button id="close">⌄</button><span>In riproduzione</span><span style="width:26px"></span></div>
+ <div id="pcv" class="big"></div><h1 id="pt"></h1><div class="au" id="pa"></div>
+ <div class="now" id="now"></div>
+ <input type="range" id="seek" min="0" max="1000" value="0"><div class="lbl"><span id="l1"></span><span id="l2"></span></div>
+ <div class="ctl"><button id="pc" title="Capitolo precedente">⏮</button><button id="bk" title="Indietro">⟲</button><button class="play" id="pp">▶</button><button id="fw" title="Avanti">⟳</button><button id="nc" title="Capitolo successivo">⏭</button></div>
+ <div class="row"><button id="sp">1×</button><button id="sl">☾ Timer</button><button id="chs">☰ Capitoli</button><button id="vo">🎙 Voce</button></div>
+</div>
+<audio id="au" playsinline preload="auto"></audio><input id="afile" type="file" accept=".mp3,audio/mpeg" multiple hidden>
+<div class="scrim" id="scrim"></div><div class="sheet" id="sheet"></div><div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){}return null}
+let books=[],db=null,cur=null,segs=[],si=0,ci=0,playing=false,tok=0,speed=+(ls('sb_speed')||1),voiceName=ls('sb_voice')||'',sleepT=null,sleepI=0,view='home',voices=[];
+/* ---------- storage ---------- */
+const sbReady=()=>window.SBTG?Promise.resolve():new Promise(r=>addEventListener('sbtg-load',r,{once:true}));
+const dbPut=async b=>{await sbReady();return SBTG.put(b,p=>toast('Carico «'+b.title+'»… '+Math.round(p*100)+'%'))};
+const dbGet=async id=>{await sbReady();return SBTG.get(id)};
+const dbDel=async id=>{await sbReady();return SBTG.del(id)};
+const prog=id=>{try{return JSON.parse(ls('sb_p_'+id))||{}}catch(e){return{}}};
+function save(){if(!cur)return;const au_=typeof useAudio==='function'&&useAudio(),fr=au_?(au.duration?aT/au.duration:0):si/Math.max(1,segs.length);ls('sb_p_'+cur.id,JSON.stringify({ch:ci,si:au_?0:si,at:au_?aT:0,pc:(ci+fr)/cur.chapters.length}))}
+function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',Math.max(2600,t.length*55))}
+/* ---------- import ---------- */
+const norm=s=>s.replace(/\s+/g,' ').trim();
+function chunkText(txt){
+  const ps=txt.replace(/\r/g,'').split(/\n+/).map(norm).filter(Boolean),chs=[];let c={t:'Parte 1',p:[]},n=0;
+  const push=()=>{if(c.p.length)chs.push(c)};
+  for(const p of ps){
+    const isH=/^(capitolo|chapter|parte|libro)\b/i.test(p)&&p.length<70;
+    if(isH||n>6000){if(c.p.length>(isH?0:0)){push();c={t:isH?p:'Parte '+(chs.length+1),p:[],};n=0}else if(isH)c.t=p}
+    c.p.push(p);n+=p.length;
+  }
+  push();return chs;
+}
+async function parseEpub(f){
+  const z=await JSZip.loadAsync(f),dp=new DOMParser(),rd=async p=>{const e=z.file(p);return e?e.async('string'):''};
+  const cont=dp.parseFromString(await rd('META-INF/container.xml'),'application/xml');
+  const opfP=cont.querySelector('rootfile').getAttribute('full-path'),dir=opfP.replace(/[^/]*$/,'');
+  const opf=dp.parseFromString(await rd(opfP),'application/xml');
+  const g=t=>{const e=opf.getElementsByTagName(t)[0];return e?norm(e.textContent):''};
+  const man={};[...opf.getElementsByTagName('item')].forEach(i=>man[i.getAttribute('id')]=i.getAttribute('href'));
+  const chs=[];let k=0;
+  for(const r of opf.getElementsByTagName('itemref')){
+    const h=man[r.getAttribute('idref')];if(!h)continue;
+    const parts=(dir+decodeURIComponent(h.split('#')[0])).split('/'),path=[];
+    parts.forEach(x=>x==='..'?path.pop():x!=='.'&&path.push(x));
+    const d=dp.parseFromString(await rd(path.join('/')),'text/html');
+    d.querySelectorAll('script,style,sup.noteref').forEach(e=>e.remove());
+    const ps=[...d.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li')].map(e=>norm(e.textContent)).filter(Boolean);
+    if(ps.join(' ').length<150)continue;
+    const hd=d.querySelector('h1,h2,h3');k++;
+    chs.push({t:hd?norm(hd.textContent).slice(0,70):'Capitolo '+k,p:ps});
+  }
+  let embedded=null;
+  try{
+    const it=[...opf.getElementsByTagName('item')],img=i=>/^image\//.test(i.getAttribute('media-type')||'');
+    const meta=[...opf.getElementsByTagName('meta')].find(m=>m.getAttribute('name')==='cover');
+    const e=it.find(i=>(i.getAttribute('properties')||'').split(/\s+/).includes('cover-image'))||(meta&&it.find(i=>i.getAttribute('id')===meta.getAttribute('content')&&img(i)))||it.find(i=>/cover/i.test((i.getAttribute('id')||'')+(i.getAttribute('href')||''))&&img(i));
+    if(e){
+      const pp=[];(dir+decodeURIComponent(e.getAttribute('href').split('#')[0])).split('/').forEach(x=>x==='..'?pp.pop():x!=='.'&&pp.push(x));
+      const zf=z.file(pp.join('/'));if(zf)embedded=new Blob([await zf.async('uint8array')],{type:e.getAttribute('media-type')||'image/jpeg'});
+    }
+  }catch(e){}
+  return{title:g('dc:title'),author:g('dc:creator'),chapters:chs,embedded};
+}
+async function addFile(f){
+  const ext=f.name.split('.').pop().toLowerCase(),base=f.name.replace(/\.[^.]+$/,'');
+  let b;
+  try{
+    if(ext==='epub')b=await parseEpub(f);
+    else{
+      let t=await f.text();
+      if(ext==='html'||ext==='htm'){const d=new DOMParser().parseFromString(t,'text/html');t=[...d.querySelectorAll('p,h1,h2,h3,li')].map(e=>e.textContent).join('\n')}
+      b={title:base,author:'',chapters:chunkText(t)};
+    }
+    if(!b.chapters.length)throw new Error('vuoto');
+    b.title=b.title||base;b.id='b'+Date.now()+Math.random().toString(36).slice(2,6);b.added=Date.now();
+    b.minutes=estMin(b.chapters);b.lang=detectLang(b.chapters);
+    await dbPut(b);books.push(b);toast('Aggiunto: '+b.title+' · cerco la copertina…');
+    try{const r=await SBTG.cover(b,b.embedded),src=r&&r.src;toast((src?(src==='epub'?'Copertina presa dall’EPUB':'Copertina trovata su '+src):'Nessuna copertina trovata')+(r&&r.meta?' · trama e genere aggiunti':''));refresh()}
+    catch(e){toast('Libro aggiunto, copertina non salvata: '+e.message)}
+  }catch(e){toast('Errore con «'+f.name+'»: '+e.message)}
+}
+$('#file').onchange=async e=>{for(const f of e.target.files)await addFile(f);e.target.value='';render()};
+/* ---------- UI ---------- */
+const hue=s=>{let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return h};
+const covers={};   /* id libro → indirizzo locale della copertina */
+const cover=(b,x='')=>{const h=hue(b.title),bg=`linear-gradient(145deg,hsl(${h} 60% 42%),hsl(${(h+40)%360} 65% 26%))`;
+  if(covers[b.id])return `<div class="cv ${x}" style="background:${bg};padding:0"><img class="cvi" src="${covers[b.id]}" alt="${esc(b.title)}"></div>`;
+  return `<div class="cv ${x}" style="background:${bg}"><b>${esc(b.title)}</b><i>${esc(b.author||'')}</i></div>`};
+const isDl=id=>!!(window.SBTG&&SBTG.isDownloaded&&SBTG.isDownloaded(id));
+const fmtMB=n=>n>=1e9?(n/1e9).toFixed(1).replace('.',',')+' GB':n>=1e6?(n/1e6).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(n/1e3))+' KB';
+const card=(b,d)=>`<div class="card" data-id="${b.id}">${isDl(b.id)?cover(b).replace(/<\/div>$/,'<span class="dl" title="Scaricato: funziona anche offline">⬇</span></div>'):cover(b)}<p>${esc(b.title)}</p><small>${esc(b.author||'Autore sconosciuto')}${b.minutes?' · '+fmtDur(b.minutes):''}${audCount(b.id)?' · 🎧':''}</small>${d?'<button class="opt" data-opt="'+b.id+'" title="Audio narrato e altro">⋯</button><button class="del" data-del="'+b.id+'">×</button>':''}</div>`;
+const emptyBox=`<div class="empty"><b>La tua libreria è vuota</b>Tocca «Aggiungi libri» e carica file EPUB, TXT, HTML o Markdown.<br>Compariranno qui e potrai ascoltarli subito.</div>`;
+/* ---------- audio narrato: esporta il testo, carica gli MP3 ---------- */
+let audioBook=null;
+async function ensureChapters(b){if(!b.chapters){toast('Preparo il testo…');b.chapters=(await dbGet(b.id)).chapters}return b.chapters}
+async function exportText(b){
+  try{
+    const chapters=await ensureChapters(b);
+    const bl=new Blob([JSON.stringify({title:b.title,author:b.author||'',chapters})],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(bl);
+    a.download=(b.title||'libro').replace(/[^\w\-]+/g,'_').slice(0,40)+'.storybooks.json';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast('Testo scaricato. Ora usa il narratore sul PC: comando «audiolibro»');
+  }catch(e){toast('Errore: '+e.message)}
+}
+/* i file si abbinano al capitolo dall'ultimo numero nel nome: 001.mp3 → capitolo 1 */
+function chapterOf(name){const m=String(name).match(/(\d+)(?!.*\d)/);return m?+m[1]-1:-1}
+$('#afile').onchange=async e=>{
+  const files=[...e.target.files];e.target.value='';
+  const b=books.find(x=>x.id===audioBook);if(!b||!files.length)return;
+  try{
+    const N=(await ensureChapters(b)).length,ok=[],skip=[];
+    for(const f of files){const n=chapterOf(f.name);(n>=0&&n<N?ok:skip).push({f,n})}
+    ok.sort((x,y)=>x.n-y.n);
+    if(!ok.length){toast('Nessun file corrisponde ai capitoli: i nomi devono contenere il numero (001.mp3, 002.mp3…)');return}
+    await sbReady();
+    for(let k=0;k<ok.length;k++){
+      const {f,n}=ok[k];
+      await SBTG.putAudio(b.id,n,f,p=>toast(`Carico l’audio · capitolo ${n+1} (${k+1}/${ok.length}) ${Math.round(p*100)}%`),b.title);
+    }
+    toast(`Audio caricato per ${ok.length} capitol${ok.length===1?'o':'i'}`+(skip.length?` · ${skip.length} file ignorati (numero non valido)`:''));
+    render();
+  }catch(err){toast('Audio non caricato: '+err.message)}
+};
+function bookMenu(id){
+  const b=books.find(x=>x.id===id);if(!b)return;
+  const c=audCount(id);
+  sheet(`<h3>${esc(b.title)}</h3>
+   <button class="it" data-a="export">📄 Scarica il testo per il narratore</button>
+   <button class="it" data-a="add">🎧 Aggiungi audio (MP3 del narratore)</button>
+   ${c?`<button class="it" data-a="rem">🗑 Rimuovi l’audio narrato (${c} capitoli)</button>`:''}
+   <p style="color:var(--mut);font-size:12px;line-height:1.45">Sul PC: scarica il testo, poi <b>python src/narratore.py audiolibro file.storybooks.json -v isabella</b>. Crea un MP3 per capitolo (001.mp3, 002.mp3…): caricali qui con «Aggiungi audio». I capitoli senza audio restano letti dalla voce scelta.</p>`);
+  $('#sheet').onclick=async e=>{
+    const x=e.target.closest('[data-a]');if(!x)return;$('#scrim').click();
+    if(x.dataset.a==='export')exportText(b);
+    else if(x.dataset.a==='add'){audioBook=id;$('#afile').click()}
+    else if(x.dataset.a==='rem'&&confirm('Rimuovere tutto l’audio narrato di questo libro? Il testo resta.')){
+      try{await sbReady();if(cur&&cur.id===id&&useAudio())pause();await SBTG.delAudio(id);toast('Audio rimosso');render()}catch(err){toast('Errore: '+err.message)}
+    }
+  };
+}
+/* ---------- ricerca e proposte ---------- */
+let q='',fg='',fd='';
+const nrm=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+const DUR={s:[0,120],m:[120,360],l:[360,1e9]};   /* minuti */
+const fmtDur=m=>!m?'':m<60?m+' min':Math.floor(m/60)+' h'+(m%60?' '+String(m%60).padStart(2,'0')+' min':'');
+const estMin=ch=>{let w=0;for(const c of ch)for(const p of c.p)w+=(p.match(/\S+/g)||[]).length;return Math.max(1,Math.round(w/150))};   /* ~150 parole al minuto a velocità 1× */
+const detectLang=ch=>{const t=ch.slice(0,3).map(c=>c.p.slice(0,20).join(' ')).join(' ').toLowerCase().slice(0,6000);
+  const it=(t.match(/\b(il|lo|la|di|che|non|per|con|una|del|della|sono|era|gli|le)\b/g)||[]).length,en=(t.match(/\b(the|and|of|to|was|that|with|for|his|her|you)\b/g)||[]).length;return en>it?'en':'it'};
+function matches(b){
+  const hay=nrm([b.title,b.author,(b.genres||[]).join(' '),b.synopsis].join(' '));
+  if(!nrm(q).split(/\s+/).filter(Boolean).every(t=>hay.includes(t)))return false;
+  if(fg&&!(b.genres||[]).includes(fg))return false;
+  if(fd){const r=DUR[fd];if(!b.minutes||b.minutes<r[0]||b.minutes>=r[1])return false}
+  return true;
+}
+function paintChips(){
+  const cnt={};books.forEach(b=>(b.genres||[]).forEach(g=>cnt[g]=(cnt[g]||0)+1));
+  const gs=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]||a.localeCompare(b));
+  const ch=(k,v,t,on)=>`<button class="chip ${on?'on':''}" data-${k}="${esc(v)}">${esc(t)}</button>`;
+  $('#fg').innerHTML=gs.length?ch('fg','','Tutti i generi',!fg)+gs.map(g=>ch('fg',g,g,fg===g)).join(''):'';
+  $('#fd').innerHTML=ch('fd','','Qualsiasi durata',!fd)+[['s','Fino a 2 h'],['m','2–6 h'],['l','Oltre 6 h']].map(([k,t])=>ch('fd',k,t,fd===k)).join('');
+}
+function paintRes(all){
+  const res=$('#res');if(!res)return;
+  if(q.trim()||fg||fd||all){
+    const l=books.filter(matches);
+    res.innerHTML=l.length?`<div class="grid">${l.map(b=>card(b)).join('')}</div>`:(books.length?'<p class="mut">Nessun libro corrisponde. Prova con meno filtri.</p>':emptyBox);
+  }else{
+    const last=books.find(b=>b.id===ls('sb_last')),rec=[...books].sort((a,b)=>b.added-a.added);
+    res.innerHTML=(last?`<h2>Continua ad ascoltare</h2><div class="hero" data-id="${last.id}">${cover(last)}<div class="t"><b>${esc(last.title)}</b><br><small style="color:var(--mut)">${esc(last.author||'')}</small><div class="bar"><i style="width:${Math.round((prog(last.id).pc||0)*100)}%"></i></div></div></div>`:'')+
+      (books.length?`<h2>Aggiunti di recente</h2><div class="shelf">${rec.map(b=>card(b)).join('')}</div>`:emptyBox);
+  }
+}
+/* aggiorna senza ricostruire la pagina (non si perde il cursore nella barra di ricerca) */
+function refresh(){if(view!=='lib'&&$('#q')){paintChips();paintRes(view==='search')}else render()}
+function render(){
+  const m=$('#main');
+  if(view==='home'||view==='search'){
+    m.innerHTML=`<input type="search" id="q" placeholder="Cerca titolo, autore, genere, trama…" value="${esc(q)}"><div class="chips" id="fg"></div><div class="chips" id="fd"></div><div id="res" style="margin-top:12px"></div>`;
+    $('#q').oninput=e=>{q=e.target.value;paintRes(view==='search')};
+    $('#fg').onclick=e=>{const c=e.target.closest('[data-fg]');if(c){fg=c.dataset.fg;paintChips();paintRes(view==='search')}};
+    $('#fd').onclick=e=>{const c=e.target.closest('[data-fd]');if(c){fd=c.dataset.fd;paintChips();paintRes(view==='search')}};
+    paintChips();paintRes(view==='search');
+  }else{
+    m.innerHTML=`<h2>La mia libreria</h2>`+(books.length?`<div class="grid">${books.map(b=>card(b,1)).join('')}</div>`:emptyBox);
+  }
+}
+/* scheda del libro: trama, genere, durata; da qui si decide se ascoltare */
+function showBook(id){
+  const b=books.find(x=>x.id===id);if(!b)return;
+  const pc=Math.round((prog(id).pc||0)*100),dl=isDl(id),di=dl&&SBTG.downloadInfo(id);
+  const gen=(b.genres||[]).map(g=>`<span class="tag">${esc(g)}</span>`).join('');
+  const itOk=!b.synopsis||b.lang==='en'||!(window.SBTG&&SBTG.isItalian)||SBTG.isItalian(b.synopsis);
+  sheet(`<div style="display:flex;gap:14px;align-items:flex-start"><div style="width:110px;flex:none">${cover(b)}</div><div style="min-width:0"><h3 style="margin:0 0 4px">${esc(b.title)}</h3><div class="mut">${esc(b.author||'Autore sconosciuto')}</div>
+    <div class="mut" style="margin:8px 0;font-size:13px">${b.minutes?'⏱ circa '+fmtDur(b.minutes)+' di ascolto':'⏱ durata non ancora calcolata'}${audCount(b.id)?' · 🎧 audio narrato':''}</div>
+    <div class="chips" style="flex-wrap:wrap;overflow:visible">${gen}</div></div></div>
+    ${b.synopsis?`<p style="line-height:1.5;font-size:14px;margin:14px 0">${esc(b.synopsis)}</p>${itOk?'':'<button class="it" data-a="info">🔎 Cerca la trama in italiano</button>'}`:`<p class="mut" style="font-size:14px;margin:14px 0">Trama e genere non ancora trovati.</p><button class="it" data-a="info">🔎 Cerca trama e genere</button>`}
+    <div class="row2"><button class="go" data-a="play">${pc>0&&pc<98?'▶ Riprendi · '+pc+'%':'▶ Riproduci'}</button><button class="go alt" data-a="${dl?'ok':'dl'}">${dl?'✓ Scaricato':'⬇ Scarica'}</button></div>
+    ${dl?`<p class="mut" style="font-size:12px;line-height:1.45;margin:10px 0 0">Salvato sul dispositivo (${fmtMB(di.bytes)}${di.audio?' · con audio narrato':''}): lo ascolti anche senza internet.</p><button class="it" data-a="rm">🗑 Rimuovi il download</button>`:''}`);
+  $('#sheet').onclick=async e=>{
+    const x=e.target.closest('[data-a]');if(!x)return;
+    if(x.dataset.a==='play'){$('#scrim').click();openBook(id)}
+    else if(x.dataset.a==='dl'){
+      if(!navigator.onLine){toast('Serve internet per scaricare il libro');return}
+      x.disabled=true;x.textContent='Scarico… 0%';
+      try{await sbReady();const r=await SBTG.download(b.id,p=>{x.textContent='Scarico… '+Math.round(p*100)+'%'});toast('Libro scaricato ('+fmtMB(r.bytes)+'): ora funziona anche offline');refresh()}
+      catch(err){toast('Download non riuscito: '+err.message)}
+      if($('#sheet').style.display==='block')showBook(id);
+    }
+    else if(x.dataset.a==='rm'){
+      if(!confirm('Rimuovere il download? Il libro resta nella libreria e si scarica di nuovo quando serve.'))return;
+      try{await sbReady();await SBTG.removeDownload(id);toast('Download rimosso');refresh()}catch(err){toast('Errore: '+err.message)}
+      showBook(id);
+    }
+    else if(x.dataset.a==='info'){
+      x.textContent='Cerco…';
+      try{await sbReady();const ok=await SBTG.enrich({id:b.id,title:b.title,author:b.author,lang:b.lang});toast(ok?'Scheda aggiornata':'Nessuna informazione trovata online')}catch(err){toast('Ricerca non riuscita: '+err.message)}
+      showBook(id);
+    }
+  };
+}
+$('#main').onclick=async e=>{
+  const o=e.target.closest('[data-opt]');if(o){e.stopPropagation();bookMenu(o.dataset.opt);return}
+  const d=e.target.closest('[data-del]');
+  if(d){e.stopPropagation();const id=d.dataset.del;if(cur&&cur.id===id){pause();cur=null;$('#mini').style.display='none'}books=books.filter(b=>b.id!==id);await dbDel(id);render();return}
+  const c=e.target.closest('[data-id]');if(c)c.classList.contains('hero')?openBook(c.dataset.id):showBook(c.dataset.id);
+};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));render()});
+/* ---------- text → speech segments (intonation / paraverbal) ---------- */
+const clean=s=>s.replace(/[«»“”"*_]/g,'').replace(/^[\s—–-]+/,'').replace(/\s[—–]\s?/g,', ').replace(/\s+/g,' ').trim();
+const MAXC=190,MINC=70;   /* un brano = 1-3 frasi (≈70-190 caratteri), mai a cavallo di due paragrafi */
+function splitLong(t){   /* frasi molto lunghe: si spezza alle virgole, poi agli spazi */
+  if(t.length<=MAXC)return[t];
+  const out=[];let a='';
+  for(const x of t.split(/(?<=[,;:])\s+/)){
+    if(a&&(a+' '+x).length>MAXC){out.push(a);a=''}
+    a=a?a+' '+x:x;
+    while(a.length>MAXC){let k=a.lastIndexOf(' ',MAXC);if(k<40)k=MAXC;out.push(a.slice(0,k));a=a.slice(k).trim()}
+  }
+  if(a)out.push(a);return out;
+}
+function buildSegs(ch){
+  const out=[];let bal=0;
+  const prosody=(t,dlg)=>{   /* intonazione dalla punteggiatura finale e dai dialoghi */
+    const end=t.replace(/["»”’)\s]+$/,'').slice(-1);let r=1,p=dlg?1.1:.97;
+    if(end==='?')p+=.14;else if(end==='!'){p+=.1;r=1.07}else if(end==='…'||/\.\.\.$/.test(t)){r=.88;p-=.05}
+    if(dlg)r*=1.03;return{r,p};
+  };
+  ch.p.forEach((para,pi)=>{
+    const start=out.length;
+    const head=pi===0&&ch.p.length>1&&para.length<90&&!/[.!?…]$/.test(para);
+    if(head){const c=clean(para);if(c)out.push({d:para,t:c,r:.9,p:.94,pp:true});return}
+    const ss=para.match(/[^.!?…]+(?:[.!?…]+["»”’)]*|$)\s*/g)||[para];
+    let buf='',bdlg=false;
+    const flush=()=>{const c=clean(buf);if(c){const q=prosody(buf.trim(),bdlg);out.push({d:buf.trim(),t:c,r:q.r,p:q.p})}buf=''};
+    ss.forEach(x=>{
+      const t=x.trim();if(!/[\p{L}\p{N}]/u.test(t))return;
+      const open=/^[«“"—–-]/.test(t),was=bal>0;
+      bal=Math.max(0,bal+(t.match(/[«“]/g)||[]).length-(t.match(/[»”]/g)||[]).length);
+      const dlg=open||was;
+      if(buf&&dlg!==bdlg)flush();            /* si cambia tono tra narrazione e dialogo */
+      for(const piece of splitLong(t)){
+        if(buf&&(buf+' '+piece).length>MAXC)flush();
+        if(!buf)bdlg=dlg;
+        buf=buf?buf+' '+piece:piece;
+        if(buf.length>=MINC)flush();
+      }
+    });
+    flush();
+    if(out.length>start)out[out.length-1].pp=true;   /* fine paragrafo */
+  });
+  return out.length?out:[{d:'…',t:'…',r:1,p:1,pp:true}];
+}
+/* ---------- speech engine ---------- */
+const qual=v=>{const n=v.name+' '+(v.voiceURI||'');let q=0;
+  if(/natural|neural/i.test(n))q+=6;if(/premium|enhanced|migliorat|potenziat/i.test(n))q+=5;
+  if(/siri/i.test(n))q+=4;if(/google/i.test(n))q+=3;if(v.localService===false)q+=1;
+  if(/elsa|isabella|diego|giuseppe|alice|federica|luca|paola|emma/i.test(n))q+=1;
+  if(/compact|eloquence|espeak/i.test(n))q-=3;return q};
+function loadVoices(){voices=(speechSynthesis.getVoices()||[]).filter(v=>/^it/i.test(v.lang.replace('_','-'))).sort((a,b)=>qual(b)-qual(a)||a.name.localeCompare(b.name))}
+try{loadVoices();speechSynthesis.onvoiceschanged=loadVoices}catch(e){}
+const pickVoice=()=>voices.find(v=>v.name===voiceName)||voices[0]||null;
+/* Lettura continua: i prossimi brani vengono messi in coda al sintetizzatore mentre il corrente è in corso,
+   così la voce non aspetta e non ricarica nulla a ogni punteggiatura. I capitoli si susseguono da soli. */
+const LOOK=3,clampR=x=>Math.min(2,Math.max(.5,x)),clampP=x=>Math.min(2,Math.max(0,x));
+let pend=0,qc=0,qi=0,qs=[],ka=0;
+function enqueue(my,v,c,i,arr){
+  const g=arr[i],u=new SpeechSynthesisUtterance(g.t);
+  u.lang='it-IT';if(v)u.voice=v;
+  u.rate=clampR(g.r*speed);u.pitch=clampP(g.p);
+  pend++;
+  u.onstart=()=>{if(my!==tok)return;if(c!==ci){ci=c;segs=arr}si=i;if(i%4===0)save();ui()};
+  u.onend=()=>{pend--;if(my===tok)feed(my)};
+  u.onerror=e=>{pend--;if(my!==tok||e.error==='interrupted'||e.error==='canceled')return;feed(my)};
+  speechSynthesis.speak(u);
+}
+function feed(my){
+  if(my!==tok||!playing)return;
+  const v=pickVoice();
+  while(pend<LOOK){
+    if(qi>=qs.length){
+      if(qc+1>=cur.chapters.length)break;
+      if(audOn(cur.id)&&hasAud(cur.id,qc+1)){if(pend===0)jump(qc+1,0);return}   /* il capitolo dopo ha l'audio narrato: ci si passa a fine coda */
+      qc++;qs=buildSegs(cur.chapters[qc]);qi=0;
+    }
+    enqueue(my,v,qc,qi,qs);qi++;
+  }
+  if(pend===0&&qi>=qs.length&&qc+1>=cur.chapters.length)pause();   /* fine del libro */
+}
+/* alcune voci online di Chrome si interrompono dopo ~15 s: un "respiro" ogni 10 s le tiene vive */
+function keepAlive(v){clearInterval(ka);ka=0;
+  if(v&&v.localService===false&&/google/i.test(v.name)&&!/android/i.test(navigator.userAgent))
+    ka=setInterval(()=>{if(speechSynthesis.speaking&&!speechSynthesis.paused){speechSynthesis.pause();speechSynthesis.resume()}},10000)}
+/* ---------- voce offline (Piper) ----------
+   Il testo viene sintetizzato qualche brano in anticipo e programmato sul clock audio senza spazi:
+   nessuna attesa tra una frase e l'altra, anche senza internet. */
+const eng=n=>n.startsWith('piper:')?window.PIPER:n.startsWith('kokoro:')?window.KOKORO:null;
+const isPiper=()=>!!eng(voiceName);   /* vale per tutte le voci offline (Piper e Kokoro) */
+let actx=null,pNodes=[],pTimers=[],pCache=new Map(),pSlow=false,pReady=false;
+const mkCtx=()=>{if(!actx){actx=new (window.AudioContext||window.webkitAudioContext)()}try{actx.resume&&actx.resume()}catch(e){}return actx};
+function pStop(){pNodes.forEach(n=>{try{n.stop()}catch(e){}try{n.disconnect()}catch(e){}});pNodes=[];pTimers.forEach(clearTimeout);pTimers=[]}
+const pSil=g=>{const e=g.t.replace(/["»”’)\s]+$/,'').slice(-1);return(g.pp?.75:e==='?'||e==='!'?.32:e==='…'?.5:/[,;:]/.test(e)?.16:.3)/speed};   /* pausa dopo il brano, in secondi */
+async function pSeg(id,g,key){
+  if(pCache.has(key))return pCache.get(key);
+  const r=await eng(voiceName).synth(id,g.t,1/Math.max(.4,g.r*speed));
+  pCache.set(key,r);if(pCache.size>14)pCache.delete(pCache.keys().next().value);return r;
+}
+async function pRun(my){
+  const id=voiceName.slice(voiceName.indexOf(':')+1),ctx=mkCtx();
+  try{
+    let c=ci,i=si,arr=segs,t=0,started=false,toAudio=-1;
+    if(!pReady)toast('Preparo la voce offline…');
+    while(my===tok&&playing){
+      if(i>=arr.length){if(c+1>=cur.chapters.length)break;if(audOn(cur.id)&&hasAud(cur.id,c+1)){toAudio=c+1;break}c++;arr=buildSegs(cur.chapters[c]);i=0}
+      while(my===tok&&playing&&started&&t-ctx.currentTime>20)await new Promise(r=>setTimeout(r,250));   /* non si anticipa più di ~20 s */
+      if(my!==tok||!playing)return;
+      const g=arr[i],{pcm,rate}=await pSeg(id,g,id+'|'+c+'|'+i+'|'+speed);
+      if(my!==tok||!playing)return;
+      pReady=true;
+      const now=ctx.currentTime,at=Math.max(t,now+.05);
+      if(started&&at-t>1.2&&!pSlow){pSlow=true;toast('Il dispositivo è lento con questa voce: prova «Riccardo» (Piper) o una voce del sistema')}
+      const buf=ctx.createBuffer(1,pcm.length,rate);buf.copyToChannel(pcm,0);
+      const src=ctx.createBufferSource();src.buffer=buf;src.connect(ctx.destination);src.start(at);pNodes.push(src);
+      src.onended=()=>{pNodes=pNodes.filter(n=>n!==src)};
+      const cc=c,ii=i,aa=arr;
+      pTimers.push(setTimeout(()=>{if(my!==tok)return;if(cc!==ci){ci=cc;segs=aa}si=ii;if(ii%4===0)save();ui()},Math.max(0,(at-now)*1000)));
+      t=at+buf.duration+pSil(g);started=true;i++;
+    }
+    if(my===tok&&playing){await new Promise(r=>setTimeout(r,Math.max(0,(t-ctx.currentTime)*1000)));if(my===tok){if(toAudio>=0)jump(toAudio,0);else pause()}}   /* fine capitolo (→ audio narrato) o fine libro */
+  }catch(e){if(my!==tok)return;console.error(e);toast('Voce offline: '+((e&&e.message)||e));pause()}
+}
+/* ---------- audio narrato (MP3 del Narratore Libri) ----------
+   Capitoli già registrati con le voci neurali: si ascoltano con un normale lettore audio, con riproduzione in
+   background, controlli nella schermata di blocco e ripresa dal punto in cui eri. I capitoli senza audio
+   continuano a essere letti dalla voce scelta. */
+const au=$('#au');
+let aT=0,aT0=0,aF=0,aUrl='',aSave=0;const aBlobs=new Map();
+const SILENT='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+const hasAud=(id,n)=>!!(window.SBTG&&SBTG.audioOf(id)[n]);
+const audOn=id=>ls('sb_au_'+id)!=='off';
+const useAudio=()=>!!cur&&audOn(cur.id)&&hasAud(cur.id,ci);
+const audCount=id=>window.SBTG?Object.keys(SBTG.audioOf(id)).length:0;
+let unlocked=false;   /* il primo tocco "sblocca" l'audio sui telefoni, che altrimenti bloccano l'avvio automatico */
+addEventListener('pointerdown',()=>{if(unlocked)return;unlocked=true;try{au.src=SILENT;const p=au.play();p&&p.then(()=>au.pause()).catch(()=>{})}catch(e){}},{once:true,passive:true});
+async function aBlob(id,n,my,visible){
+  const k=id+':'+n;if(aBlobs.has(k))return aBlobs.get(k);
+  const loc=await SBTG.hasAudioLocal(id,n);
+  if(visible&&my===tok)toast(loc?'Apro l’audio…':'Scarico l’audio del capitolo…');
+  const bl=await SBTG.getAudio(id,n,p=>{if(visible&&!loc&&my===tok)toast('Scarico l’audio… '+Math.round(p*100)+'%')});
+  aBlobs.set(k,bl);if(aBlobs.size>3)aBlobs.delete(aBlobs.keys().next().value);return bl;
+}
+function mediaSess(){
+  if(!('mediaSession' in navigator)||typeof MediaMetadata==='undefined')return;
+  try{navigator.mediaSession.metadata=new MediaMetadata({title:cur.chapters[ci].t,artist:cur.author||'',album:cur.title,artwork:covers[cur.id]?[{src:covers[cur.id],sizes:'512x512',type:'image/jpeg'}]:[]})}catch(e){}
+  const h=(a,f)=>{try{navigator.mediaSession.setActionHandler(a,f)}catch(e){}};
+  h('play',()=>play());h('pause',()=>pause());h('seekbackward',()=>aSeekBy(-15));h('seekforward',()=>aSeekBy(15));
+  h('previoustrack',()=>$('#pc').click());h('nexttrack',()=>$('#nc').click());
+}
+function aSeekBy(d){if(!au.duration)return;au.currentTime=Math.max(0,Math.min(au.duration-.5,au.currentTime+d));aT=au.currentTime;aTick(true)}
+function aTick(force){
+  if(!cur||!useAudio())return;
+  aT=au.currentTime;const d=au.duration||0;
+  $('#seek').value=Math.round(1000*(d?aT/d:0));
+  $('#l2').textContent=Math.round(100*(ci+(d?aT/d:0))/cur.chapters.length)+'% del libro';
+  if(force||Date.now()-aSave>5000){aSave=Date.now();save()}
+}
+async function aPlay(){
+  try{speechSynthesis.cancel()}catch(e){}pStop();
+  playing=true;const my=++tok;pend=0;ui();
+  const id=cur.id,n=ci;
+  try{
+    const bl=await aBlob(id,n,my,true);
+    if(my!==tok)return;
+    if(aUrl)URL.revokeObjectURL(aUrl);aUrl=URL.createObjectURL(bl);
+    au.src=aUrl;au.playbackRate=speed;au.preservesPitch=true;au.webkitPreservesPitch=true;
+    await new Promise(r=>{au.onloadedmetadata=r;setTimeout(r,8000)});
+    if(my!==tok)return;
+    const d=au.duration||0;
+    const t=aT0>0?aT0:(aF>0&&d?aF*d:0);aT0=0;aF=0;
+    if(t>0&&d)au.currentTime=Math.min(t,Math.max(0,d-1));
+    aT=au.currentTime;
+    await au.play();
+    if(my!==tok)return;
+    mediaSess();ui();
+    if(hasAud(id,n+1))aBlob(id,n+1,my,false).catch(()=>{});   /* scarica in anticipo il capitolo successivo */
+  }catch(e){
+    if(my!==tok)return;
+    if(e&&e.name==='NotAllowedError'){playing=false;ui();toast('Tocca ▶ per avviare l’audio');return}
+    console.error(e);toast('Audio: '+((e&&e.message)||e));pause();
+  }
+}
+au.addEventListener('timeupdate',()=>aTick());
+au.addEventListener('ended',()=>{if(!playing||!useAudio())return;aT0=0;if(ci+1<cur.chapters.length)jump(ci+1,0);else pause()});
+au.addEventListener('error',()=>{if(playing&&useAudio()&&au.src&&au.src!==SILENT&&!au.src.startsWith('data:')){toast('Audio non riproducibile');pause()}});
+function play(){
+  if(!cur)return;
+  if(useAudio()){aPlay();return}
+  try{au.pause()}catch(e){}
+  if(isPiper()){try{speechSynthesis.cancel()}catch(e){}pStop();mkCtx();playing=true;const my=++tok;pend=0;ui();pRun(my);return}
+  if(!('speechSynthesis' in window)){toast('Questo browser non supporta la sintesi vocale');return}
+  pStop();speechSynthesis.cancel();playing=true;const my=++tok;pend=0;qc=ci;qs=segs;qi=si;keepAlive(pickVoice());ui();setTimeout(()=>feed(my),60)
+}
+function pause(){playing=false;tok++;pend=0;clearInterval(ka);ka=0;pStop();try{au.pause();aT=au.currentTime}catch(e){}try{speechSynthesis.cancel()}catch(e){}save();ui()}
+function loadCh(i,s){ci=i;segs=buildSegs(cur.chapters[i]);si=Math.max(0,Math.min(s,segs.length-1))}
+function jump(i,s){const was=playing;tok++;pend=0;pStop();try{au.pause()}catch(e){}try{speechSynthesis.cancel()}catch(e){}if(i!==ci||s!==si){aT=0;aT0=0}loadCh(i,s);save();was?play():ui()}
+async function openBook(id){
+  const b=books.find(x=>x.id===id);if(!b)return;
+  if(!b.chapters){toast('Scarico il libro…');try{b.chapters=(await dbGet(id)).chapters}catch(e){return toast('Errore di download: '+e.message)}}
+  if(!b.minutes&&b.chapters){b.minutes=estMin(b.chapters);sbReady().then(()=>SBTG.setMeta(b.id,{minutes:b.minutes})).catch(()=>{})}
+  if(cur&&cur.id!==id){pause()}
+  if(!cur||cur.id!==id){cur=b;const p=prog(id);aT=0;aT0=p.at||0;loadCh(Math.min(p.ch||0,b.chapters.length-1),p.si||0);ls('sb_last',id)}
+  $('#pl').classList.add('open');play();
+}
+function ui(){
+  if(!cur)return;
+  $('#mini').style.display='flex';
+  $('#mcv').innerHTML=cover(cur);$('#mt').innerHTML=`<b>${esc(cur.title)}</b><small>${esc(cur.chapters[ci].t)}</small>`;
+  $('#pcv').innerHTML=cover(cur);$('#pt').textContent=cur.title;$('#pa').textContent=cur.author||'';
+  const g=segs[si]||segs[segs.length-1],am=useAudio();$('#now').textContent=am?'🎧 Audio narrato · tocca ⟲ ⟳ per spostarti di 15 secondi':(g?g.d:'');
+  $('#seek').value=am?Math.round(1000*(au.duration?aT/au.duration:0)):Math.round(1000*si/Math.max(1,segs.length-1));
+  $('#l1').textContent=`${ci+1}/${cur.chapters.length} · ${cur.chapters[ci].t.slice(0,30)}`;
+  $('#l2').textContent=Math.round(100*(ci+(am?(au.duration?aT/au.duration:0):si/Math.max(1,segs.length)))/cur.chapters.length)+'% del libro';
+  $('#pp').textContent=$('#mplay').textContent=playing?'❚❚':'▶';
+  $('#sp').textContent=speed+'×';
+}
+$('#pp').onclick=$('#mplay').onclick=()=>playing?pause():play();
+$('#mt').onclick=()=>$('#pl').classList.add('open');
+$('#mx').onclick=e=>{   /* ✕: ferma, chiude il lettore (il libro resta in «Continua ad ascoltare») */
+  e.stopPropagation();pause();cur=null;segs=[];
+  $('#mini').style.display='none';$('#pl').classList.remove('open');
+  try{if('mediaSession' in navigator){navigator.mediaSession.metadata=null;navigator.mediaSession.playbackState='none'}}catch(x){}
+  refresh();
+};
+$('#close').onclick=()=>$('#pl').classList.remove('open');
+$('#seek').onchange=e=>{if(useAudio()){if(au.duration){au.currentTime=e.target.value/1000*au.duration;aTick(true)}}else jump(ci,Math.round(e.target.value/1000*(segs.length-1)))};
+$('#bk').onclick=()=>useAudio()?aSeekBy(-15):jump(ci,si-4);$('#fw').onclick=()=>useAudio()?aSeekBy(15):jump(ci,si+4);
+$('#pc').onclick=()=>jump(Math.max(0,(useAudio()?aT>5:si>3)?ci:ci-1),0);
+$('#nc').onclick=()=>ci+1<cur.chapters.length&&jump(ci+1,0);
+$('#sp').onclick=()=>{const l=[.8,.9,1,1.1,1.25,1.5];speed=l[(l.indexOf(speed)+1)%l.length];ls('sb_speed',speed);if(useAudio()){au.playbackRate=speed;ui()}else if(playing)jump(ci,si);else ui()};
+$('#sl').onclick=()=>{const l=[0,15,30,60];sleepI=(sleepI+1)%4;clearTimeout(sleepT);const m=l[sleepI];
+  $('#sl').textContent=m?`☾ ${m} min`:'☾ Timer';if(m){sleepT=setTimeout(()=>{pause();$('#sl').textContent='☾ Timer';sleepI=0;toast('Timer scaduto: buonanotte')},m*60000)}};
+function sheet(h){$('#sheet').innerHTML=h;$('#sheet').style.display='block';$('#scrim').style.display='block'}
+$('#scrim').onclick=()=>{$('#sheet').style.display=$('#scrim').style.display='none'};
+$('#chs').onclick=()=>{sheet('<h3>Capitoli</h3>'+cur.chapters.map((c,i)=>`<button class="it ${i===ci?'on':''}" data-c="${i}">${i+1}. ${esc(c.t)}</button>`).join(''));
+  $('#sheet').onclick=e=>{const b=e.target.closest('[data-c]');if(b){$('#scrim').click();jump(+b.dataset.c,0)}}};
+const vTag=v=>/natural|neural/i.test(v.name)?'★ Neurale · online':/premium|enhanced|migliorat|potenziat/i.test(v.name)?'★ Alta qualità':v.localService===false?'Online':'Sul dispositivo';
+function vTips(){
+  const u=navigator.userAgent;
+  const t=/iPhone|iPad/i.test(u)?'Su iPhone/iPad: Impostazioni → Accessibilità → Contenuto letto → Voci → Italiano, e scarica le voci «Premium» o «Avanzata» (per esempio Alice, Federica, Luca). Poi riapri questa pagina.'
+   :/Android/i.test(u)?'Su Android: Impostazioni → Sintesi vocale (o «Servizi vocali di Google») → installa le voci italiane di qualità alta e scegli la migliore. Poi riapri questa pagina.'
+   :/Edg\//.test(u)?'In Edge compaiono le voci «Online (Natural)» di Microsoft (Elsa, Diego, Isabella e altre): sono tra le più realistiche e non richiedono installazioni.'
+   :/Mac/i.test(u)?'Su Mac: Impostazioni → Accessibilità → Contenuto letto → Voce di sistema → Gestisci voci → Italiano, e scarica le voci «Premium». Con Edge trovi anche le voci «Online (Natural)».'
+   :'Per voci molto più naturali apri questa pagina con Microsoft Edge: offre le voci «Online (Natural)» (Elsa, Diego, Isabella e altre) senza installare nulla.';
+  return '<p style="color:var(--mut);font-size:12px;line-height:1.45">'+t+'</p>';
+}
+async function pickPiper(full,btn){
+  const E=eng(full),id=full.slice(full.indexOf(':')+1);
+  if(!E||!E.ok()){toast('Questo browser non supporta le voci offline');return}
+  mkCtx();
+  const sm=btn.querySelector('small'),say=t=>{sm.textContent=t};
+  say('Controllo i componenti…');
+  const miss=await E.check();
+  if(miss.length){say('Componenti mancanti ('+miss.join(', ')+'): esegui su GitHub l’azione «Prepara '+(E.label||'Piper')+'».');return}
+  if(!(await E.has(id))){
+    try{await E.download(id,p=>say('Scarico la voce… '+Math.round(p*100)+'%'))}
+    catch(e){say('Download non riuscito: '+((e&&e.message)||e));return}
+  }
+  pCache.clear();voiceName=full;ls('sb_voice',voiceName);$('#scrim').click();
+  if(playing)jump(ci,si);
+}
+$('#vo').onclick=async()=>{
+  loadVoices();const cv=pickVoice(),pv=!!eng(voiceName);
+  let pip='';
+  for(const [E,pre,tit,nota] of [[window.PIPER,'piper:','Voci offline (Piper)','Sintesi neurale che gira sul tuo dispositivo. Dopo il primo download legge anche senza internet; sui telefoni più vecchi può essere lenta.'],[window.KOKORO,'kokoro:','Voci offline (Kokoro)','Voci neurali più naturali, anche loro sul dispositivo. Modello da circa 90 MB, scaricato una sola volta; più pesanti di Piper sui telefoni vecchi.']]){
+    if(!E||!E.ok())continue;
+    const st=await Promise.all(E.VOICES.map(v=>E.has(v.id)));
+    pip+='<h3 style="margin-top:16px">'+tit+'</h3>'+E.VOICES.map((v,k)=>`<button class="it ${voiceName===pre+v.id?'on':''}" data-p="${pre+v.id}">${esc(v.nome)}<br><small style="color:var(--mut)">${st[k]?'Pronta · funziona senza internet':'Da scaricare una volta · '+esc(v.info)}</small></button>`).join('')+'<p style="color:var(--mut);font-size:12px;line-height:1.45">'+nota+'</p>';
+  }
+  const nA=cur?audCount(cur.id):0,on=cur&&audOn(cur.id);
+  const audBtn=nA?`<button class="it ${on?'on':''}" data-aud="1">🎧 Audio narrato (${nA} capitoli)<br><small style="color:var(--mut)">${on?'Attivo: i capitoli con audio si ascoltano con la voce del narratore':'Disattivato: si usa la voce scelta qui sotto'}</small></button>`:'';
+  sheet('<h3>Voce di lettura</h3>'+audBtn+(voices.length?voices.map(v=>`<button class="it ${!pv&&cv&&v.name===cv.name?'on':''}" data-v="${esc(v.name)}">${esc(v.name)}<br><small style="color:var(--mut)">${vTag(v)}</small></button>`).join(''):'<p>Nessuna voce italiana trovata sul dispositivo.</p>')+vTips()+pip);
+  $('#sheet').onclick=e=>{
+    const t=e.target.closest('[data-aud]');
+    if(t){
+      const was=useAudio(),fr=was?(au.duration?aT/au.duration:0):0;
+      ls('sb_au_'+cur.id,on?'off':'on');$('#scrim').click();
+      if(was){aT=0;jump(ci,Math.floor(fr*Math.max(1,segs.length)))}                 /* dall'audio alla voce: stesso punto del capitolo */
+      else if(useAudio()){aF=si/Math.max(1,segs.length);const w=playing;if(w)jump(ci,0);else ui()}   /* dalla voce all'audio */
+      else ui();
+      return}
+    const p=e.target.closest('[data-p]');if(p){pickPiper(p.dataset.p,p);return}
+    const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si)}
+  }};
+/* ---- schermata di caricamento: l’app si mostra solo quando libreria, copertine e voci sono pronte ---- */
+(()=>{
+  const el=$('#boot'),bar=$('#bootbar'),st=$('#bootst'),go=$('#bootgo');
+  const tasks={},label={};let closed=false;
+  const upd=()=>{if(closed)return;const k=Object.keys(tasks),f=k.reduce((a,n)=>a+tasks[n],0)/Math.max(1,k.length);
+    bar.style.width=Math.round(f*100)+'%';const open=k.find(n=>tasks[n]<1);st.textContent=open?label[open]:'Quasi pronto…'};
+  const close=()=>{if(closed)return;closed=true;bar.style.width='100%';el.classList.add('out');setTimeout(()=>el.remove(),400)};
+  const set=(n,f,txt)=>{tasks[n]=Math.min(1,f);if(txt)label[n]=txt;upd()};
+  const finish=n=>{set(n,1);if(Object.keys(tasks).every(k=>tasks[k]>=1))close()};
+  const limit=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]);
+  const run=(n,fn,ms)=>limit(Promise.resolve().then(fn).catch(e=>console.warn('Avvio «'+n+'»: '+((e&&e.message)||e))),ms).then(()=>finish(n));
+  /* i passaggi si registrano tutti prima di partire, così la barra non si chiude a metà */
+  set('app',0,'Avvio dell’app…');set('lib',0,'Carico la libreria…');set('cover',0,'Carico le copertine…');set('voci',0,'Preparo le voci…');
+  setTimeout(()=>go.classList.add('on'),10000);go.onclick=close;   /* via d’uscita se qualcosa non risponde */
+
+  async function bootLib(){
+    await sbReady();set('app',1);
+    books=SBTG.cached();render();
+    try{books=await SBTG.list()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}
+    render();
+  }
+  async function bootCovers(){
+    const need=books.filter(b=>b.cover),tot=need.length;
+    if(!tot)return;
+    for(;;){
+      const n=need.filter(b=>covers[b.id]).length;
+      set('cover',n/tot,'Carico le copertine ('+n+'/'+tot+')…');
+      if(n>=tot)return;
+      await new Promise(r=>setTimeout(r,250));
+    }
+  }
+  async function bootVoices(){
+    if('speechSynthesis' in window){
+      await limit(new Promise(r=>{
+        if((speechSynthesis.getVoices()||[]).length)return r();
+        speechSynthesis.addEventListener('voiceschanged',r,{once:true});
+      }),2500);
+      loadVoices();
+    }
+    set('voci',.3);
+    const wait=(k,ev)=>window[k]?0:new Promise(r=>addEventListener(ev,r,{once:true}));
+    await limit(Promise.all([wait('PIPER','piper-load'),wait('KOKORO','kokoro-load')]),4000);
+    set('voci',.5);
+    /* la voce offline scelta si prepara qui, così non blocca il sito alla prima lettura */
+    const E=eng(voiceName);
+    if(E&&E.warm){
+      const id=voiceName.slice(voiceName.indexOf(':')+1);
+      if(await E.has(id)){set('voci',.5,'Preparo la voce offline…');await E.warm(id)}
+    }
+  }
+  run('app',async()=>{await sbReady()},20000);
+  run('lib',bootLib,25000).then(()=>run('cover',bootCovers,10000));
+  run('voci',bootVoices,45000);
+  setTimeout(close,60000);
+})();
+$('#tgout').onclick=async()=>{await sbReady();SBTG.menu()};
+let rt=0;addEventListener('sbtg-cover',e=>{covers[e.detail.id]=e.detail.url;clearTimeout(rt);rt=setTimeout(()=>{refresh();if(cur&&$('#pcv')&&covers[cur.id]){$('#pcv').innerHTML=cover(cur);$('#mcv').innerHTML=cover(cur)}},150)});
+addEventListener('sbtg-catalog',e=>{const old=new Map(books.map(b=>[b.id,b]));books=e.detail.map(b=>{const o=old.get(b.id);return o&&o.chapters?{...b,chapters:o.chapters,lang:o.lang}:b});refresh()});
+</script>
+<script type="module" src="./storage.js"></script>
+<script type="module" src="./piper.js"></script>
+<script type="module" src="./kokoro.js"></script>
+<script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))</script>
+</body></html>
