@@ -129,5 +129,7 @@ export function synth(id,text,length=1){
   };
   const p=chain.then(run,run);chain=p.catch(()=>{});return p;
 }
-window.KOKORO={VOICES,label,ok,check,has,remove,download,synth};
+/* prepara tutto in anticipo (libreria, modello, fonemizzatore e un primo test), senza scaricare nulla */
+export async function warm(id){await getMap();await getInst();await getTts();await synth(id,'Ciao.',1)}
+window.KOKORO={VOICES,label,ok,check,has,remove,download,synth,warm};
 window.dispatchEvent(new Event('kokoro-load'));

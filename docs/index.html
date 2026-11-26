@@ -68,9 +68,18 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 .sheet{position:fixed;left:0;right:0;bottom:0;max-height:70%;overflow:auto;background:var(--bg);border-radius:18px 18px 0 0;z-index:30;display:none;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));max-width:720px;margin:auto}
 .sheet h3{margin:0 0 8px}.sheet button.it{display:block;width:100%;text-align:left;padding:12px 4px;border-bottom:1px solid var(--line)}
 .sheet .on{color:var(--acc);font-weight:700}
-.toast{position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;z-index:50;display:none;font-size:13px}
+.toast{position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;z-index:600;display:none;font-size:13px}
+#boot{position:fixed;inset:0;z-index:500;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;transition:opacity .35s}
+#boot.out{opacity:0;pointer-events:none}
+#boot .logo{font-size:34px}
+#boot .bar{width:min(260px,70vw);height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+#boot .bar i{display:block;height:100%;width:0;background:var(--acc);border-radius:3px;transition:width .3s}
+#boot .st{font-size:13px;color:var(--mut);min-height:1.4em}
+#boot button{display:none;background:none;border:0;color:var(--acc);font:inherit;font-weight:600;cursor:pointer;padding:8px}
+#boot button.on{display:block}
 </style></head>
 <body>
+<div id="boot" role="status" aria-live="polite"><div class="logo">storybooks</div><div class="bar"><i id="bootbar"></i></div><div class="st" id="bootst">Avvio…</div><button id="bootgo">Continua comunque</button></div>
 <div class="top"><div class="logo">storybooks</div><div style="display:flex;align-items:center;gap:12px"><label class="add">+ Aggiungi libri<input id="file" type="file" multiple accept=".epub,.txt,.md,.html,.htm" hidden></label><button id="tgout" class="led" data-s="busy" title="Telegram" aria-label="Stato Telegram"><i></i></button></div></div>
 <main id="main"></main>
 <div class="mini" id="mini"><div id="mcv" style="width:42px"></div><div class="t" id="mt"><b></b><small></small></div><button id="mplay">▶</button><button id="mx" aria-label="Chiudi il lettore" title="Chiudi">✕</button></div>
@@ -601,7 +610,61 @@ $('#vo').onclick=async()=>{
     const p=e.target.closest('[data-p]');if(p){pickPiper(p.dataset.p,p);return}
     const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si);else sample()}
   }};
-(async()=>{await sbReady();books=SBTG.cached();render();try{books=await SBTG.list()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}render()})();
+/* ---- schermata di caricamento: l’app si mostra solo quando libreria, copertine e voci sono pronte ---- */
+(()=>{
+  const el=$('#boot'),bar=$('#bootbar'),st=$('#bootst'),go=$('#bootgo');
+  const tasks={},label={};let closed=false;
+  const upd=()=>{if(closed)return;const k=Object.keys(tasks),f=k.reduce((a,n)=>a+tasks[n],0)/Math.max(1,k.length);
+    bar.style.width=Math.round(f*100)+'%';const open=k.find(n=>tasks[n]<1);st.textContent=open?label[open]:'Quasi pronto…'};
+  const close=()=>{if(closed)return;closed=true;bar.style.width='100%';el.classList.add('out');setTimeout(()=>el.remove(),400)};
+  const set=(n,f,txt)=>{tasks[n]=Math.min(1,f);if(txt)label[n]=txt;upd()};
+  const finish=n=>{set(n,1);if(Object.keys(tasks).every(k=>tasks[k]>=1))close()};
+  const limit=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]);
+  const run=(n,fn,ms)=>limit(Promise.resolve().then(fn).catch(e=>console.warn('Avvio «'+n+'»: '+((e&&e.message)||e))),ms).then(()=>finish(n));
+  /* i passaggi si registrano tutti prima di partire, così la barra non si chiude a metà */
+  set('app',0,'Avvio dell’app…');set('lib',0,'Carico la libreria…');set('cover',0,'Carico le copertine…');set('voci',0,'Preparo le voci…');
+  setTimeout(()=>go.classList.add('on'),10000);go.onclick=close;   /* via d’uscita se qualcosa non risponde */
+
+  async function bootLib(){
+    await sbReady();set('app',1);
+    books=SBTG.cached();render();
+    try{books=await SBTG.list()}catch(e){toast('Catalogo non raggiungibile: '+e.message)}
+    render();
+  }
+  async function bootCovers(){
+    const need=books.filter(b=>b.cover),tot=need.length;
+    if(!tot)return;
+    for(;;){
+      const n=need.filter(b=>covers[b.id]).length;
+      set('cover',n/tot,'Carico le copertine ('+n+'/'+tot+')…');
+      if(n>=tot)return;
+      await new Promise(r=>setTimeout(r,250));
+    }
+  }
+  async function bootVoices(){
+    if('speechSynthesis' in window){
+      await limit(new Promise(r=>{
+        if((speechSynthesis.getVoices()||[]).length)return r();
+        speechSynthesis.addEventListener('voiceschanged',r,{once:true});
+      }),2500);
+      loadVoices();
+    }
+    set('voci',.3);
+    const wait=(k,ev)=>window[k]?0:new Promise(r=>addEventListener(ev,r,{once:true}));
+    await limit(Promise.all([wait('PIPER','piper-load'),wait('KOKORO','kokoro-load')]),4000);
+    set('voci',.5);
+    /* la voce offline scelta si prepara qui, così non blocca il sito alla prima lettura */
+    const E=eng(voiceName);
+    if(E&&E.warm){
+      const id=voiceName.slice(voiceName.indexOf(':')+1);
+      if(await E.has(id)){set('voci',.5,'Preparo la voce offline…');await E.warm(id)}
+    }
+  }
+  run('app',async()=>{await sbReady()},20000);
+  run('lib',bootLib,25000).then(()=>run('cover',bootCovers,10000));
+  run('voci',bootVoices,45000);
+  setTimeout(close,60000);
+})();
 $('#tgout').onclick=async()=>{await sbReady();SBTG.menu()};
 let rt=0;addEventListener('sbtg-cover',e=>{covers[e.detail.id]=e.detail.url;clearTimeout(rt);rt=setTimeout(()=>{refresh();if(cur&&$('#pcv')&&covers[cur.id]){$('#pcv').innerHTML=cover(cur);$('#mcv').innerHTML=cover(cur)}},150)});
 addEventListener('sbtg-catalog',e=>{const old=new Map(books.map(b=>[b.id,b]));books=e.detail.map(b=>{const o=old.get(b.id);return o&&o.chapters?{...b,chapters:o.chapters,lang:o.lang}:b});refresh()});

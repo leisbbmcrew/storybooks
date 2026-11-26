@@ -126,5 +126,7 @@ export function synth(id,text,length=1){
   };
   const p=chain.then(run,run);chain=p.catch(()=>{});return p;
 }
-window.PIPER={VOICES,ok,check,has,remove,download,synth};
+/* prepara in anticipo modello e fonemizzatore, senza scaricare nulla */
+export async function warm(id){await getSession(id);await getInst()}
+window.PIPER={VOICES,ok,check,has,remove,download,synth,warm};
 window.dispatchEvent(new Event('piper-load'));
