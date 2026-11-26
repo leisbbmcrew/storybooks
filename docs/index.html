@@ -395,18 +395,19 @@ function keepAlive(v){clearInterval(ka);ka=0;
 /* ---------- voce offline (Piper) ----------
    Il testo viene sintetizzato qualche brano in anticipo e programmato sul clock audio senza spazi:
    nessuna attesa tra una frase e l'altra, anche senza internet. */
-const isPiper=()=>voiceName.startsWith('piper:')&&!!window.PIPER;
+const eng=n=>n.startsWith('piper:')?window.PIPER:n.startsWith('kokoro:')?window.KOKORO:null;
+const isPiper=()=>!!eng(voiceName);   /* vale per tutte le voci offline (Piper e Kokoro) */
 let actx=null,pNodes=[],pTimers=[],pCache=new Map(),pSlow=false,pReady=false;
 const mkCtx=()=>{if(!actx){actx=new (window.AudioContext||window.webkitAudioContext)()}try{actx.resume&&actx.resume()}catch(e){}return actx};
 function pStop(){pNodes.forEach(n=>{try{n.stop()}catch(e){}try{n.disconnect()}catch(e){}});pNodes=[];pTimers.forEach(clearTimeout);pTimers=[]}
 const pSil=g=>{const e=g.t.replace(/["»”’)\s]+$/,'').slice(-1);return(g.pp?.75:e==='?'||e==='!'?.32:e==='…'?.5:/[,;:]/.test(e)?.16:.3)/speed};   /* pausa dopo il brano, in secondi */
 async function pSeg(id,g,key){
   if(pCache.has(key))return pCache.get(key);
-  const r=await PIPER.synth(id,g.t,1/Math.max(.4,g.r*speed));
+  const r=await eng(voiceName).synth(id,g.t,1/Math.max(.4,g.r*speed));
   pCache.set(key,r);if(pCache.size>14)pCache.delete(pCache.keys().next().value);return r;
 }
 async function pRun(my){
-  const id=voiceName.slice(6),ctx=mkCtx();
+  const id=voiceName.slice(voiceName.indexOf(':')+1),ctx=mkCtx();
   try{
     let c=ci,i=si,arr=segs,t=0,started=false,toAudio=-1;
     if(!pReady)toast('Preparo la voce offline…');
@@ -418,7 +419,7 @@ async function pRun(my){
       if(my!==tok||!playing)return;
       pReady=true;
       const now=ctx.currentTime,at=Math.max(t,now+.05);
-      if(started&&at-t>1.2&&!pSlow){pSlow=true;toast('Il dispositivo è lento con questa voce: prova «Riccardo» o una voce del sistema')}
+      if(started&&at-t>1.2&&!pSlow){pSlow=true;toast('Il dispositivo è lento con questa voce: prova «Riccardo» (Piper) o una voce del sistema')}
       const buf=ctx.createBuffer(1,pcm.length,rate);buf.copyToChannel(pcm,0);
       const src=ctx.createBufferSource();src.buffer=buf;src.connect(ctx.destination);src.start(at);pNodes.push(src);
       src.onended=()=>{pNodes=pNodes.filter(n=>n!==src)};
@@ -427,14 +428,15 @@ async function pRun(my){
       t=at+buf.duration+pSil(g);started=true;i++;
     }
     if(my===tok&&playing){await new Promise(r=>setTimeout(r,Math.max(0,(t-ctx.currentTime)*1000)));if(my===tok){if(toAudio>=0)jump(toAudio,0);else pause()}}   /* fine capitolo (→ audio narrato) o fine libro */
-  }catch(e){if(my!==tok)return;console.error(e);toast('Voce Piper: '+((e&&e.message)||e));pause()}
+  }catch(e){if(my!==tok)return;console.error(e);toast('Voce offline: '+((e&&e.message)||e));pause()}
 }
 async function psample(id){
+  const E=eng(voiceName);
   try{
     const ctx=mkCtx();toast('Preparo la voce…');
-    const {pcm,rate}=await PIPER.synth(id,'Buonasera. Questa è la mia voce: ti leggerò il libro con calma.',1/speed);
+    const {pcm,rate}=await E.synth(id,'Buonasera. Questa è la mia voce: ti leggerò il libro con calma.',1/speed);
     pStop();const b=ctx.createBuffer(1,pcm.length,rate);b.copyToChannel(pcm,0);const n=ctx.createBufferSource();n.buffer=b;n.connect(ctx.destination);n.start();pNodes.push(n);
-  }catch(e){toast('Voce Piper: '+((e&&e.message)||e))}
+  }catch(e){toast('Voce offline: '+((e&&e.message)||e))}
 }
 /* ---------- audio narrato (MP3 del Narratore Libri) ----------
    Capitoli già registrati con le voci neurali: si ascoltano con un normale lettore audio, con riproduzione in
@@ -561,26 +563,28 @@ function vTips(){
   return '<p style="color:var(--mut);font-size:12px;line-height:1.45">'+t+'</p>';
 }
 function sample(){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('Buonasera. Questa è la mia voce: ti leggerò il libro con calma, fermandomi quando serve.');u.lang='it-IT';const v=pickVoice();if(v)u.voice=v;u.rate=clampR(speed);speechSynthesis.speak(u)}catch(e){}}
-async function pickPiper(id,btn){
-  if(!window.PIPER||!PIPER.ok()){toast('Questo browser non supporta le voci offline');return}
+async function pickPiper(full,btn){
+  const E=eng(full),id=full.slice(full.indexOf(':')+1);
+  if(!E||!E.ok()){toast('Questo browser non supporta le voci offline');return}
   mkCtx();
   const sm=btn.querySelector('small'),say=t=>{sm.textContent=t};
   say('Controllo i componenti…');
-  const miss=await PIPER.check();
-  if(miss.length){say('Componenti mancanti ('+miss.join(', ')+'): esegui su GitHub l’azione «Prepara Piper».');return}
-  if(!(await PIPER.has(id))){
-    try{await PIPER.download(id,p=>say('Scarico la voce… '+Math.round(p*100)+'%'))}
+  const miss=await E.check();
+  if(miss.length){say('Componenti mancanti ('+miss.join(', ')+'): esegui su GitHub l’azione «Prepara '+(E.label||'Piper')+'».');return}
+  if(!(await E.has(id))){
+    try{await E.download(id,p=>say('Scarico la voce… '+Math.round(p*100)+'%'))}
     catch(e){say('Download non riuscito: '+((e&&e.message)||e));return}
   }
-  pCache.clear();voiceName='piper:'+id;ls('sb_voice',voiceName);$('#scrim').click();
+  pCache.clear();voiceName=full;ls('sb_voice',voiceName);$('#scrim').click();
   if(playing)jump(ci,si);else psample(id);
 }
 $('#vo').onclick=async()=>{
-  loadVoices();const cv=pickVoice(),pv=voiceName.startsWith('piper:');
+  loadVoices();const cv=pickVoice(),pv=!!eng(voiceName);
   let pip='';
-  if(window.PIPER&&PIPER.ok()){
-    const st=await Promise.all(PIPER.VOICES.map(v=>PIPER.has(v.id)));
-    pip='<h3 style="margin-top:16px">Voci offline (Piper)</h3>'+PIPER.VOICES.map((v,k)=>`<button class="it ${voiceName==='piper:'+v.id?'on':''}" data-p="${v.id}">${esc(v.nome)}<br><small style="color:var(--mut)">${st[k]?'Pronta · funziona senza internet':'Da scaricare una volta · '+esc(v.info)}</small></button>`).join('')+'<p style="color:var(--mut);font-size:12px;line-height:1.45">Sintesi neurale che gira sul tuo dispositivo. Dopo il primo download legge anche senza internet; sui telefoni più vecchi può essere lenta.</p>';
+  for(const [E,pre,tit,nota] of [[window.PIPER,'piper:','Voci offline (Piper)','Sintesi neurale che gira sul tuo dispositivo. Dopo il primo download legge anche senza internet; sui telefoni più vecchi può essere lenta.'],[window.KOKORO,'kokoro:','Voci offline (Kokoro)','Voci neurali più naturali, anche loro sul dispositivo. Modello da circa 90 MB, scaricato una sola volta; più pesanti di Piper sui telefoni vecchi.']]){
+    if(!E||!E.ok())continue;
+    const st=await Promise.all(E.VOICES.map(v=>E.has(v.id)));
+    pip+='<h3 style="margin-top:16px">'+tit+'</h3>'+E.VOICES.map((v,k)=>`<button class="it ${voiceName===pre+v.id?'on':''}" data-p="${pre+v.id}">${esc(v.nome)}<br><small style="color:var(--mut)">${st[k]?'Pronta · funziona senza internet':'Da scaricare una volta · '+esc(v.info)}</small></button>`).join('')+'<p style="color:var(--mut);font-size:12px;line-height:1.45">'+nota+'</p>';
   }
   const nA=cur?audCount(cur.id):0,on=cur&&audOn(cur.id);
   const audBtn=nA?`<button class="it ${on?'on':''}" data-aud="1">🎧 Audio narrato (${nA} capitoli)<br><small style="color:var(--mut)">${on?'Attivo: i capitoli con audio si ascoltano con la voce del narratore':'Disattivato: si usa la voce scelta qui sotto'}</small></button>`:'';
@@ -604,5 +608,6 @@ addEventListener('sbtg-catalog',e=>{const old=new Map(books.map(b=>[b.id,b]));bo
 </script>
 <script type="module" src="./storage.js"></script>
 <script type="module" src="./piper.js"></script>
+<script type="module" src="./kokoro.js"></script>
 <script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))</script>
 </body></html>

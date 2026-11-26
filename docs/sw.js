@@ -3,7 +3,7 @@
    così funziona offline anche se non l'hai mai ricaricata. Pagine e script: prima la rete, poi la copia salvata.
    File pesanti (cartella piper/, telegram-lib.js): prima la copia salvata. Se li aggiorni, cambia il nome qui sotto (v2, v3…). */
 const C='sb-shell-v1';
-const CORE=['./','./index.html','./storage.js','./telegram.js','./telegram-config.js','./piper.js','./telegram-lib.js'];
+const CORE=['./','./index.html','./storage.js','./telegram.js','./telegram-config.js','./piper.js','./kokoro.js','./telegram-lib.js'];
 self.addEventListener('install',e=>{
   self.skipWaiting();
   e.waitUntil((async()=>{
@@ -18,7 +18,7 @@ self.addEventListener('activate',e=>e.waitUntil((async()=>{
 self.addEventListener('fetch',e=>{
   const r=e.request,u=new URL(r.url);
   if(r.method!=='GET'||u.origin!==location.origin)return;
-  const heavy=/\/piper\/|telegram-lib\.js$/.test(u.pathname);
+  const heavy=/\/piper\/|\/kokoro\/|telegram-lib\.js$/.test(u.pathname);
   e.respondWith((async()=>{
     const c=await caches.open(C);
     if(heavy){const m=await c.match(r.url);if(m)return m}
