@@ -54,7 +54,7 @@ let ortP=null;
 const loadOrt=()=>ortP||(ortP=(async()=>{
   if(!window.ort)await loadScript(BASE+'ort/ort.min.js');
   const ort=window.ort;if(!ort||!ort.InferenceSession)throw new Error('ONNX Runtime non valido');
-  ort.env.wasm.wasmPaths=BASE+'ort/';ort.env.wasm.numThreads=1;ort.env.wasm.proxy=false;
+  ort.env.wasm.wasmPaths=BASE+'ort/';ort.env.wasm.numThreads=1;ort.env.wasm.proxy=true;   /* il calcolo gira in un worker: l’interfaccia non si congela */
   return ort;
 })().catch(e=>{ortP=null;throw e}));
 let phP=null;
@@ -99,11 +99,26 @@ async function getSession(id){
   const session=await ort.InferenceSession.create(new Uint8Array(await m.arrayBuffer()),{executionProviders:['wasm'],graphOptimizationLevel:'all'});
   sess.clear();const s={session,cfg};sess.set(id,s);return s;
 }
+/* esegue il modello; alla prima esecuzione, se il worker non risponde o dà errore, ripiega sul calcolo diretto */
+let proxyOn=true,firstRun=true;
+async function runModel(id,feeds){
+  const ort=await loadOrt(),{session}=await getSession(id);
+  if(!firstRun)return session.run(feeds);
+  try{
+    const r=await Promise.race([session.run(feeds),new Promise((_,rej)=>setTimeout(()=>rej(new Error('worker non risponde')),60000))]);
+    firstRun=false;return r;
+  }catch(e){
+    firstRun=false;
+    if(!proxyOn)throw e;
+    proxyOn=false;ort.env.wasm.proxy=false;sess.clear();
+    return (await getSession(id)).session.run(feeds);
+  }
+}
 let chain=Promise.resolve();   /* una sintesi alla volta */
 /* text → {pcm:Float32Array, rate}; length>1 rallenta, <1 accelera */
 export function synth(id,text,length=1){
   const run=async()=>{
-    const ort=await loadOrt(),{session,cfg}=await getSession(id);
+    const ort=await loadOrt(),{cfg}=await getSession(id);
     const rate=cfg.audio&&cfg.audio.sample_rate||22050,inf=cfg.inference||{};
     const idsList=await phonemize(text,(cfg.espeak&&cfg.espeak.voice)||'it');
     const gap=new Float32Array(Math.round(rate*.2)),outs=[];let n=0;
@@ -114,7 +129,7 @@ export function synth(id,text,length=1){
         scales:new ort.Tensor('float32',Float32Array.from([inf.noise_scale??.667,(inf.length_scale??1)*length,inf.noise_w??.8]),[3])
       };
       if((cfg.num_speakers||1)>1)feeds.sid=new ort.Tensor('int64',BigInt64Array.from([0n]),[1]);
-      const res=await session.run(feeds),t=res.output||Object.values(res)[0];
+      const res=await runModel(id,feeds),t=res.output||Object.values(res)[0];
       if(!t||!t.data)throw new Error('il modello non ha prodotto audio');
       outs.push(t.data,gap);n+=t.data.length+gap.length;
     }

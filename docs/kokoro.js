@@ -44,20 +44,32 @@ const loadLib=()=>libP||(libP=(async()=>{
   lib.env.backends.onnx.wasm.wasmPaths=BASE+'ort/';lib.env.backends.onnx.wasm.numThreads=1;
   return lib;
 })().catch(e=>{libP=null;throw e}));
-async function getTts(onProgress){
+let proxyOn=true;   /* il calcolo gira in un worker: l’interfaccia non si congela; se non parte si ripiega sul calcolo diretto */
+const limit=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('worker non risponde')),ms))]);
+async function getTts(onProgress,id){
   if(tts)return tts;
-  const {KokoroTTS}=await loadLib(),files={};
-  tts=await KokoroTTS.from_pretrained(REPO,{dtype:'q8',device:'wasm',progress_callback:p=>{
-    if(p&&p.status==='progress'&&p.total){files[p.file]={l:p.loaded,t:p.total};
-      if(onProgress){let l=0,t=0;for(const f in files){l+=files[f].l;t+=files[f].t}onProgress(Math.min(1,l/t))}}
-  }}).catch(e=>{tts=null;throw e});
-  return tts;
+  const lib=await loadLib(),{KokoroTTS}=lib;
+  for(let tent=0;;tent++){
+    lib.env.backends.onnx.wasm.proxy=proxyOn;
+    const files={};
+    const t=await KokoroTTS.from_pretrained(REPO,{dtype:'q8',device:'wasm',progress_callback:p=>{
+      if(p&&p.status==='progress'&&p.total){files[p.file]={l:p.loaded,t:p.total};
+        if(onProgress){let l=0,tt=0;for(const f in files){l+=files[f].l;tt+=files[f].t}onProgress(Math.min(1,l/tt))}}
+    }});
+    try{
+      if(id){const {input_ids}=t.tokenizer('\u02C8a',{truncation:true});await limit(t.generate_from_ids(input_ids,{voice:id}),60000)}   /* prova rapida */
+      tts=t;return t;
+    }catch(e){
+      if(proxyOn&&tent===0){proxyOn=false;continue}
+      throw e;
+    }
+  }
 }
 
 export async function download(id,onProgress){
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
   await getMap();
-  await getTts(onProgress);
+  await getTts(onProgress,id);
   await synth(id,'Ciao.',1);          /* scarica anche il file della voce */
   if(onProgress)onProgress(1);
 }
@@ -117,7 +129,7 @@ let chain=Promise.resolve();
 /* text → {pcm:Float32Array, rate}; length>1 rallenta, <1 accelera (come in piper.js) */
 export function synth(id,text,length=1){
   const run=async()=>{
-    await loadLib();const t=await getTts();
+    await loadLib();const t=await getTts(undefined,id);
     const ph=await phonemizeIt(text);
     if(!ph)throw new Error('nessun fonema per il testo');
     const {input_ids}=t.tokenizer(ph,{truncation:true});
@@ -130,6 +142,6 @@ export function synth(id,text,length=1){
   const p=chain.then(run,run);chain=p.catch(()=>{});return p;
 }
 /* prepara tutto in anticipo (libreria, modello, fonemizzatore e un primo test), senza scaricare nulla */
-export async function warm(id){await getMap();await getInst();await getTts();await synth(id,'Ciao.',1)}
+export async function warm(id){await getMap();await getInst();await getTts(undefined,id);await synth(id,'Ciao.',1)}
 window.KOKORO={VOICES,label,ok,check,has,remove,download,synth,warm};
 window.dispatchEvent(new Event('kokoro-load'));
