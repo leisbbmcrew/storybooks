@@ -476,7 +476,20 @@ const eng=n=>n.startsWith('piper:')?window.PIPER:null;   /* Kokoro non legge pi�
 const isPiper=()=>!!eng(voiceName);   /* vale per tutte le voci offline (Piper e Kokoro) */
 let actx=null,pNodes=[],pTimers=[],pCache=new Map(),pSlow=false,pReady=false;
 const mkCtx=()=>{if(!actx){actx=new (window.AudioContext||window.webkitAudioContext)()}try{actx.resume&&actx.resume()}catch(e){}return actx};
-function pStop(){pNodes.forEach(n=>{try{n.stop()}catch(e){}try{n.disconnect()}catch(e){}});pNodes=[];pTimers.forEach(clearTimeout);pTimers=[]}
+/* A schermo bloccato il telefono ferma l'audio prodotto dalla pagina, ma non quello di un normale lettore: l'uscita di Piper
+   passa quindi dall'elemento <audio> (come per gli MP3), con i controlli nella schermata di blocco. */
+let pDest=null,pViaAu=false;
+function pAttach(ctx){
+  try{
+    if(!pDest)pDest=ctx.createMediaStreamDestination();
+    au.srcObject=pDest.stream;
+    const p=au.play();
+    if(p&&p.then)p.then(()=>{if(au.srcObject===pDest.stream)pViaAu=true}).catch(()=>{pViaAu=false;try{au.srcObject=null}catch(e){}});
+    else pViaAu=true;
+  }catch(e){pViaAu=false;try{au.srcObject=null}catch(x){}}
+}
+function pStop(){pNodes.forEach(n=>{try{n.stop()}catch(e){}try{n.disconnect()}catch(e){}});pNodes=[];pTimers.forEach(clearTimeout);pTimers=[];
+  pViaAu=false;if(au.srcObject){try{au.pause()}catch(e){}try{au.srcObject=null}catch(e){}}}
 const pSil=g=>{const e=g.t.replace(/["»”’)\s]+$/,'').slice(-1);return(g.pp?.75:e==='?'||e==='!'?.32:e==='…'?.5:/[,;:]/.test(e)?.16:.3)/speed};   /* pausa dopo il brano, in secondi */
 async function pSeg(id,g,key){
   if(pCache.has(key))return pCache.get(key);
@@ -490,7 +503,7 @@ async function pRun(my){
     if(!pReady)toast('Preparo la voce offline…');
     while(my===tok&&playing){
       if(i>=arr.length){if(c+1>=cur.chapters.length)break;if(audOn(cur.id)&&hasAud(cur.id,c+1)){toAudio=c+1;break}c++;arr=buildSegs(cur.chapters[c]);i=0}
-      while(my===tok&&playing&&started&&t-ctx.currentTime>20)await new Promise(r=>setTimeout(r,250));   /* non si anticipa più di ~20 s */
+      while(my===tok&&playing&&started&&t-ctx.currentTime>(document.hidden?75:20))await new Promise(r=>setTimeout(r,250));   /* non si anticipa più di ~20 s */
       if(my!==tok||!playing)return;
       const g=arr[i],{pcm,rate}=await pSeg(id,g,id+'|'+c+'|'+i+'|'+speed);
       if(my!==tok||!playing)return;
@@ -498,7 +511,7 @@ async function pRun(my){
       const now=ctx.currentTime,at=Math.max(t,now+.05);
       if(started&&at-t>1.2&&!pSlow){pSlow=true;toast('Il dispositivo è lento con questa voce: prova «Riccardo» (Piper) o una voce del sistema')}
       const buf=ctx.createBuffer(1,pcm.length,rate);buf.copyToChannel(pcm,0);
-      const src=ctx.createBufferSource();src.buffer=buf;src.connect(ctx.destination);src.start(at);pNodes.push(src);
+      const src=ctx.createBufferSource();src.buffer=buf;src.connect(pViaAu&&pDest?pDest:ctx.destination);src.start(at);pNodes.push(src);
       src.onended=()=>{pNodes=pNodes.filter(n=>n!==src)};
       const cc=c,ii=i,aa=arr;
       pTimers.push(setTimeout(()=>{if(my!==tok)return;if(cc!==ci){ci=cc;segs=aa}si=ii;if(ii%4===0)save();ui()},Math.max(0,(at-now)*1000)));
@@ -536,11 +549,12 @@ async function aBlob(id,n,my,visible){
   const bl=await SBTG.getAudio(id,n,p=>{if(visible&&!loc&&my===tok)toast('Scarico l’audio… '+Math.round(p*100)+'%')});
   aBlobs.set(k,bl);if(aBlobs.size>3)aBlobs.delete(aBlobs.keys().next().value);return bl;
 }
+addEventListener('visibilitychange',()=>{if(!document.hidden&&playing&&actx&&actx.state!=='running'){try{actx.resume()}catch(e){}}});
 function mediaSess(){
   if(!('mediaSession' in navigator)||typeof MediaMetadata==='undefined')return;
   try{navigator.mediaSession.metadata=new MediaMetadata({title:cur.chapters[ci].t,artist:cur.author||'',album:cur.title,artwork:covers[cur.id]?[{src:covers[cur.id],sizes:'512x512',type:'image/jpeg'}]:[]})}catch(e){}
   const h=(a,f)=>{try{navigator.mediaSession.setActionHandler(a,f)}catch(e){}};
-  h('play',()=>play());h('pause',()=>pause());h('seekbackward',()=>aSeekBy(-15));h('seekforward',()=>aSeekBy(15));
+  h('play',()=>play());h('pause',()=>pause());h('seekbackward',()=>useAudio()?aSeekBy(-15):jump(ci,si-4));h('seekforward',()=>useAudio()?aSeekBy(15):jump(ci,si+4));
   h('previoustrack',()=>$('#pc').click());h('nexttrack',()=>$('#nc').click());
 }
 function aSeekBy(d){if(!au.duration)return;au.currentTime=Math.max(0,Math.min(au.duration-.5,au.currentTime+d));aT=au.currentTime;aTick(true)}
@@ -583,7 +597,7 @@ function play(){
   if(!cur)return;
   if(useAudio()){aPlay();return}
   try{au.pause()}catch(e){}
-  if(isPiper()){try{speechSynthesis.cancel()}catch(e){}pStop();mkCtx();playing=true;const my=++tok;pend=0;ui();pRun(my);return}
+  if(isPiper()){try{speechSynthesis.cancel()}catch(e){}pStop();pAttach(mkCtx());mediaSess();playing=true;const my=++tok;pend=0;ui();pRun(my);return}
   if(!('speechSynthesis' in window)){toast('Questo browser non supporta la sintesi vocale');return}
   pStop();speechSynthesis.cancel();playing=true;const my=++tok;pend=0;qc=ci;qs=segs;qi=si;keepAlive(pickVoice());ui();setTimeout(()=>feed(my),60)
 }
