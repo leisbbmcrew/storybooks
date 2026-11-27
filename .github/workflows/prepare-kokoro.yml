@@ -19,12 +19,13 @@ jobs:
           mkdir -p /tmp/k && cd /tmp/k
           npm init -y >/dev/null
           # --ignore-scripts: niente download di binari per Node (servono solo nel browser)
-          npm install kokoro-js@^1.2.0 esbuild@^0.24.0 --ignore-scripts --no-audit --no-fund
+          npm install kokoro-js@^1.2.0 esbuild@^0.24.0 @breezystack/lamejs --ignore-scripts --no-audit --no-fund
           npm ls kokoro-js phonemizer @huggingface/transformers onnxruntime-web || true
           cat > entry.js <<'JS'
           export {KokoroTTS} from 'kokoro-js';
           export {phonemize} from 'phonemizer';
           export {env} from '@huggingface/transformers';
+          export {Mp3Encoder} from '@breezystack/lamejs';
           JS
           cat > build.mjs <<'JS'
           import {build} from 'esbuild';
