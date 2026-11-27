@@ -188,14 +188,24 @@ const emptyBox=`<div class="empty"><b>La tua libreria è vuota</b>Tocca «Aggiun
 /* ---------- audio narrato: esporta il testo, carica gli MP3 ---------- */
 let audioBook=null;
 async function ensureChapters(b){if(!b.chapters){toast('Preparo il testo…');b.chapters=(await dbGet(b.id)).chapters}return b.chapters}
-async function exportText(b){
+const NVOCI=[['elsa','Elsa','femminile chiara e naturale (consigliata per libri)'],['isabella','Isabella','femminile calda e narrativa'],['diego','Diego','maschile naturale e fluida'],['benigno','Benigno','maschile calmo e rilassante']];
+function exportText(b){
+  const last=ls('sb_nvoce')||'elsa';
+  sheet('<h3>Voce del narratore</h3><p style="color:var(--mut);font-size:12px;line-height:1.45">Scarico il testo del libro; la voce la usa il programma sul PC. Ti mostro il comando già pronto.</p>'+
+    NVOCI.map(v=>`<button class="it ${v[0]===last?'on':''}" data-n="${v[0]}">${v[1]}<br><small style="color:var(--mut)">${v[2]}</small></button>`).join(''));
+  $('#sheet').onclick=e=>{const x=e.target.closest('[data-n]');if(!x)return;ls('sb_nvoce',x.dataset.n);exportFile(b,x.dataset.n)};
+}
+async function exportFile(b,voce){
   try{
     const chapters=await ensureChapters(b);
     const bl=new Blob([JSON.stringify({title:b.title,author:b.author||'',chapters})],{type:'application/json'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(bl);
-    a.download=(b.title||'libro').replace(/[^\w\-]+/g,'_').slice(0,40)+'.storybooks.json';
+    const fname=(b.title||'libro').replace(/[^\w\-]+/g,'_').slice(0,40)+'.storybooks.json';
+    const a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download=fname;
     document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-    toast('Testo scaricato. Ora usa il narratore sul PC: comando «audiolibro»');
+    const cmd='python src/narratore.py audiolibro "'+fname+'" -v '+voce;
+    sheet('<h3>Testo scaricato</h3><p style="color:var(--mut);font-size:13px;line-height:1.45">Sul PC, nella cartella del narratore, lancia questo comando (crea un MP3 per capitolo; poi li carichi qui con «Aggiungi audio»):</p>'+
+      '<pre style="white-space:pre-wrap;word-break:break-all;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px">'+esc(cmd)+'</pre><button class="it" data-k="1">📋 Copia il comando</button>');
+    $('#sheet').onclick=e=>{if(e.target.closest('[data-k]'))navigator.clipboard.writeText(cmd).then(()=>toast('Comando copiato'),()=>toast('Copia non riuscita: selezionalo a mano'))};
   }catch(e){toast('Errore: '+e.message)}
 }
 /* i file si abbinano al capitolo dall'ultimo numero nel nome: 001.mp3 → capitolo 1 */
@@ -217,6 +227,27 @@ $('#afile').onchange=async e=>{
     render();
   }catch(err){toast('Audio non caricato: '+err.message)}
 };
+async function doDl(b,btn){
+  if(!navigator.onLine){toast('Serve internet per scaricare il libro');return false}
+  toast('Scarico il libro…');
+  try{await sbReady();const r=await SBTG.download(b.id,p=>{if(btn)btn.textContent='Scarico… '+Math.round(p*100)+'%'});toast('Libro scaricato ('+fmtMB(r.bytes)+'): ora funziona anche offline');refresh();return true}
+  catch(err){toast('Download non riuscito: '+err.message);return false}
+}
+async function dlChoose(b){
+  const P=window.PIPER&&PIPER.ok()?PIPER:null,K=window.KOKORO&&KOKORO.ok()?KOKORO:null;
+  const E=eng(voiceName),curName=E?((E.VOICES.find(v=>'piper:'+v.id===voiceName)||{}).nome||voiceName):(voiceName||'voce del telefono');
+  const st=P?await Promise.all(P.VOICES.map(v=>P.has(v.id))):[];
+  sheet(`<h3>Scarica «${esc(b.title)}»</h3><p style="color:var(--mut);font-size:12px;line-height:1.45">Il libro si salva sul dispositivo. Scegli con quale voce ascoltarlo.</p>
+   <button class="it" data-d="keep">Mantieni la voce attuale<br><small style="color:var(--mut)">${esc(curName)}</small></button>
+   ${P?P.VOICES.map((v,k)=>`<button class="it ${voiceName==='piper:'+v.id?'on':''}" data-d="piper:${v.id}">${esc(v.nome)}<br><small style="color:var(--mut)">${st[k]?'Pronta · funziona senza internet':'Da scaricare una volta · '+esc(v.info)}</small></button>`).join(''):''}
+   ${K?K.VOICES.map(v=>`<button class="it" data-d="kok:${v.id}">${esc(v.nome.replace(' (Kokoro)',''))} · crea anche l’audiolibro<br><small style="color:var(--mut)">Dopo il download prepara l’audio di tutto il libro con questa voce (ci vuole tempo)</small></button>`).join(''):''}`);
+  $('#sheet').onclick=async e=>{
+    const x=e.target.closest('[data-d]');if(!x)return;const d=x.dataset.d;
+    if(d==='keep'){$('#scrim').click();await doDl(b)}
+    else if(d.startsWith('piper:')){if(await pickPiper(d,x))await doDl(b)}   /* pickPiper chiude la scheda quando ha finito */
+    else if(d.startsWith('kok:')){$('#scrim').click();if(await doDl(b))genBook(b,d.slice(4))}
+  };
+}
 function bookMenu(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   const tc=tgAudCount(id),ka=kauGet(id),kc=ka.done.length,kt=ka.total||(b.chapters&&b.chapters.length)||0;
@@ -229,7 +260,7 @@ function bookMenu(id){
    ${window.KOKORO&&KOKORO.ok()?KOKORO.VOICES.map(kvoce).join(''):'<p style="color:var(--mut);font-size:12px">Questo browser non supporta le voci Kokoro.</p>'}
    ${kc?`<button class="it" data-a="krem">🗑 Rimuovi l’audiolibro Kokoro (${kc} capitoli)</button>`:''}
    <p style="color:var(--mut);font-size:12px;line-height:1.45">Kokoro prepara tutto il libro una sola volta e lo salva sul dispositivo; poi lo ascolti da lì, senza calcoli mentre leggi e senza internet. La prima volta richiede tempo (tieni l’app aperta e lo schermo acceso): se la interrompi, i capitoli finiti restano. Occupa circa 30 MB per ora di ascolto.</p>
-   <p style="color:var(--mut);font-size:12px;line-height:1.45">Sul PC: scarica il testo, poi <b>python src/narratore.py audiolibro file.storybooks.json -v isabella</b>. Crea un MP3 per capitolo (001.mp3, 002.mp3…): caricali qui con «Aggiungi audio». I capitoli senza audio restano letti dalla voce scelta.</p>`);
+   <p style="color:var(--mut);font-size:12px;line-height:1.45">Voci del narratore sul PC (Elsa, Isabella, Diego, Benigno): tocca «Scarica il testo per il narratore» e scegli la voce. Crea un MP3 per capitolo: caricali qui con «Aggiungi audio». I capitoli senza audio restano letti dalla voce scelta.</p>`);
   $('#sheet').onclick=async e=>{
     const g=e.target.closest('[data-g]');
     if(g){$('#scrim').click();genBook(b,g.dataset.g);return}
@@ -358,13 +389,7 @@ function showBook(id){
   $('#sheet').onclick=async e=>{
     const x=e.target.closest('[data-a]');if(!x)return;
     if(x.dataset.a==='play'){$('#scrim').click();openBook(id)}
-    else if(x.dataset.a==='dl'){
-      if(!navigator.onLine){toast('Serve internet per scaricare il libro');return}
-      x.disabled=true;x.textContent='Scarico… 0%';
-      try{await sbReady();const r=await SBTG.download(b.id,p=>{x.textContent='Scarico… '+Math.round(p*100)+'%'});toast('Libro scaricato ('+fmtMB(r.bytes)+'): ora funziona anche offline');refresh()}
-      catch(err){toast('Download non riuscito: '+err.message)}
-      if($('#sheet').style.display==='block')showBook(id);
-    }
+    else if(x.dataset.a==='dl'){dlChoose(b)}
     else if(x.dataset.a==='rm'){
       if(!confirm('Rimuovere il download? Il libro resta nella libreria e si scarica di nuovo quando serve.'))return;
       try{await sbReady();await SBTG.removeDownload(id);toast('Download rimosso');refresh()}catch(err){toast('Errore: '+err.message)}
@@ -656,18 +681,19 @@ function vTips(){
 }
 async function pickPiper(full,btn){
   const E=eng(full),id=full.slice(full.indexOf(':')+1);
-  if(!E||!E.ok()){toast('Questo browser non supporta le voci offline');return}
+  if(!E||!E.ok()){toast('Questo browser non supporta le voci offline');return false}
   mkCtx();
   const sm=btn.querySelector('small'),say=t=>{sm.textContent=t};
   say('Controllo i componenti…');
   const miss=await E.check();
-  if(miss.length){say('Componenti mancanti ('+miss.join(', ')+'): esegui su GitHub l’azione «Prepara '+(E.label||'Piper')+'».');return}
+  if(miss.length){say('Componenti mancanti ('+miss.join(', ')+'): esegui su GitHub l’azione «Prepara '+(E.label||'Piper')+'».');return false}
   if(!(await E.has(id))){
     try{await E.download(id,p=>say('Scarico la voce… '+Math.round(p*100)+'%'))}
-    catch(e){say('Download non riuscito: '+((e&&e.message)||e));return}
+    catch(e){say('Download non riuscito: '+((e&&e.message)||e));return false}
   }
   pCache.clear();voiceName=full;ls('sb_voice',voiceName);$('#scrim').click();
   if(playing)jump(ci,si);
+  return true;
 }
 $('#vo').onclick=async()=>{
   loadVoices();const cv=pickVoice(),pv=!!eng(voiceName);
