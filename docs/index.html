@@ -69,6 +69,11 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 .sheet h3{margin:0 0 8px}.sheet button.it{display:block;width:100%;text-align:left;padding:12px 4px;border-bottom:1px solid var(--line)}
 .sheet .on{color:var(--acc);font-weight:700}
 .toast{position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;z-index:600;display:none;font-size:13px}
+#gen{position:fixed;left:8px;right:8px;bottom:calc(128px + env(safe-area-inset-bottom,0px));z-index:35;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:none;flex-direction:column;gap:8px;font-size:12px}
+#gen.on{display:flex}
+#gen .gb{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+#gen .gb i{display:block;height:100%;width:0;background:var(--acc);transition:width .3s}
+#gen button{align-self:flex-end;background:none;border:0;color:var(--acc);font:inherit;font-weight:600;cursor:pointer;padding:2px 4px}
 #boot{position:fixed;inset:0;z-index:500;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;transition:opacity .35s}
 #boot.out{opacity:0;pointer-events:none}
 #boot .logo{font-size:34px}
@@ -94,6 +99,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 </div>
 <audio id="au" playsinline preload="auto"></audio><input id="afile" type="file" accept=".mp3,audio/mpeg" multiple hidden>
 <div class="scrim" id="scrim"></div><div class="sheet" id="sheet"></div><div class="toast" id="toast"></div>
+<div id="gen"><div id="gt"></div><div class="gb"><i id="gbar"></i></div><button id="gx">Annulla</button></div>
 <script>
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -213,20 +219,82 @@ $('#afile').onchange=async e=>{
 };
 function bookMenu(id){
   const b=books.find(x=>x.id===id);if(!b)return;
-  const c=audCount(id);
+  const tc=tgAudCount(id),ka=kauGet(id),kc=ka.done.length,kt=ka.total||(b.chapters&&b.chapters.length)||0;
+  const kvoce=v=>`<button class="it" data-g="${v.id}" ${genJob?'disabled':''}>🎙 ${esc(v.nome.replace(' (Kokoro)',''))}${ka.voice===v.id&&kc?` · ${kc}${kt?'/'+kt:''} capitoli pronti`:''}<br><small style="color:var(--mut)">${ka.voice===v.id&&kt&&kc>=kt?'Audiolibro completo: si ascolta dal dispositivo':ka.voice===v.id&&kc?'Completa: rifà solo i capitoli mancanti':'Crea l’audiolibro con questa voce'}</small></button>`;
   sheet(`<h3>${esc(b.title)}</h3>
    <button class="it" data-a="export">📄 Scarica il testo per il narratore</button>
    <button class="it" data-a="add">🎧 Aggiungi audio (MP3 del narratore)</button>
-   ${c?`<button class="it" data-a="rem">🗑 Rimuovi l’audio narrato (${c} capitoli)</button>`:''}
+   ${tc?`<button class="it" data-a="rem">🗑 Rimuovi l’audio narrato (${tc} capitoli)</button>`:''}
+   <h3 style="margin-top:16px">Audiolibro con voce Kokoro</h3>
+   ${window.KOKORO&&KOKORO.ok()?KOKORO.VOICES.map(kvoce).join(''):'<p style="color:var(--mut);font-size:12px">Questo browser non supporta le voci Kokoro.</p>'}
+   ${kc?`<button class="it" data-a="krem">🗑 Rimuovi l’audiolibro Kokoro (${kc} capitoli)</button>`:''}
+   <p style="color:var(--mut);font-size:12px;line-height:1.45">Kokoro prepara tutto il libro una sola volta e lo salva sul dispositivo; poi lo ascolti da lì, senza calcoli mentre leggi e senza internet. La prima volta richiede tempo (tieni l’app aperta e lo schermo acceso): se la interrompi, i capitoli finiti restano. Occupa circa 30 MB per ora di ascolto.</p>
    <p style="color:var(--mut);font-size:12px;line-height:1.45">Sul PC: scarica il testo, poi <b>python src/narratore.py audiolibro file.storybooks.json -v isabella</b>. Crea un MP3 per capitolo (001.mp3, 002.mp3…): caricali qui con «Aggiungi audio». I capitoli senza audio restano letti dalla voce scelta.</p>`);
   $('#sheet').onclick=async e=>{
+    const g=e.target.closest('[data-g]');
+    if(g){$('#scrim').click();genBook(b,g.dataset.g);return}
     const x=e.target.closest('[data-a]');if(!x)return;$('#scrim').click();
     if(x.dataset.a==='export')exportText(b);
     else if(x.dataset.a==='add'){audioBook=id;$('#afile').click()}
     else if(x.dataset.a==='rem'&&confirm('Rimuovere tutto l’audio narrato di questo libro? Il testo resta.')){
       try{await sbReady();if(cur&&cur.id===id&&useAudio())pause();await SBTG.delAudio(id);toast('Audio rimosso');render()}catch(err){toast('Errore: '+err.message)}
     }
+    else if(x.dataset.a==='krem'&&confirm('Rimuovere l’audiolibro Kokoro di questo libro? Il testo resta.')){
+      try{if(cur&&cur.id===id&&useAudio())pause();await KOKORO.kaudRemove(id);kauSet(id,{voice:'',done:[]});aBlobs.clear();toast('Audiolibro Kokoro rimosso');render()}catch(err){toast('Errore: '+err.message)}
+    }
   };
+}
+/* ---- audiolibro con Kokoro: si genera una volta sola, si conserva sul dispositivo e si ascolta da lì ---- */
+let genJob=null;
+addEventListener('beforeunload',e=>{if(genJob){e.preventDefault();e.returnValue=''}});
+async function genBook(b,voice){
+  if(genJob){toast('Sto già preparando un audiolibro');return}
+  const K=window.KOKORO;
+  if(!K||!K.ok()){toast('Questo browser non supporta le voci Kokoro');return}
+  const miss=await K.check();
+  if(miss.length){toast('Componenti Kokoro mancanti: esegui su GitHub l’azione «Prepara Kokoro»');return}
+  let chs;try{chs=await ensureChapters(b)}catch(e){toast('Libro non disponibile: '+((e&&e.message)||e));return}
+  let meta=kauGet(b.id);
+  if(meta.voice&&meta.voice!==voice&&meta.done.length){
+    if(!confirm('Questo libro ha già un audiolibro con un’altra voce. Lo rifaccio da capo con la nuova?'))return;
+    await K.kaudRemove(b.id);meta={voice,done:[]};aBlobs.clear();
+  }
+  if((await K.encoder())==='wav'&&!confirm('Manca il compressore MP3: l’audio occuperà molto spazio (circa 170 MB per ora di ascolto). Per ridurlo rilancia su GitHub l’azione «Prepara Kokoro». Continuo comunque?'))return;
+  meta.voice=voice;meta.total=chs.length;kauSet(b.id,meta);
+  const job=genJob={stop:false},box=$('#gen'),gt=$('#gt'),gbar=$('#gbar');
+  box.classList.add('on');gt.textContent='Preparo la voce…';gbar.style.width='0%';
+  $('#gx').onclick=()=>{job.stop=true;gt.textContent='Mi fermo dopo la frase in corso…'};
+  let wl=null;
+  try{
+    try{wl=await navigator.wakeLock.request('screen')}catch(e){}
+    if(!(await K.has(voice))){
+      if(!navigator.onLine)throw new Error('serve internet solo per scaricare la voce la prima volta');
+      await K.download(voice,p=>{gt.textContent='Scarico la voce… '+Math.round(p*100)+'%';gbar.style.width=Math.round(p*100)+'%'});
+    }
+    const todo=[];
+    for(let n=0;n<chs.length;n++){
+      if(meta.done.includes(n)&&await K.kaudHas(b.id,n))continue;   /* il file c’è già sul dispositivo: non si rifà */
+      const items=buildSegs(chs[n]).map(g=>({t:g.t,r:g.r||1,sil:pSil(g)*speed}));
+      if(items.length)todo.push({n,items,chars:items.reduce((a,i)=>a+i.t.length,0)});
+    }
+    meta.done=meta.done.filter(n=>!todo.some(x=>x.n===n));kauSet(b.id,meta);
+    if(!todo.length){toast('L’audiolibro è già completo sul dispositivo');return}
+    const total=todo.reduce((a,x)=>a+x.chars,0),t0=Date.now();let before=0,fin=0;
+    for(const x of todo){
+      if(job.stop)break;
+      const blob=await K.renderChapter(voice,x.items,{stop:()=>job.stop,onProgress:f=>{
+        const fr=(before+f*x.chars)/total,el=(Date.now()-t0)/60000,eta=fr>.02?el/fr*(1-fr):0;
+        gbar.style.width=Math.round(fr*100)+'%';
+        gt.textContent='🎙 Capitolo '+(fin+1)+'/'+todo.length+' · '+Math.round(fr*100)+'%'+(eta>=1?' · restano circa '+fmtDur(Math.ceil(eta)):'');
+      }});
+      if(!blob)break;
+      await K.kaudPut(b.id,x.n,blob);
+      meta.done.push(x.n);meta.done.sort((p,q)=>p-q);kauSet(b.id,meta);
+      before+=x.chars;fin++;
+    }
+    toast(job.stop?'Interrotto: i capitoli finiti restano salvati':'Audiolibro pronto: ora si ascolta dal dispositivo');
+  }catch(e){console.error(e);toast('Audiolibro: '+((e&&e.message)||e))}
+  finally{try{wl&&wl.release()}catch(e){}genJob=null;box.classList.remove('on');render()}
 }
 /* ---------- ricerca e proposte ---------- */
 let q='',fg='',fd='';
@@ -404,7 +472,7 @@ function keepAlive(v){clearInterval(ka);ka=0;
 /* ---------- voce offline (Piper) ----------
    Il testo viene sintetizzato qualche brano in anticipo e programmato sul clock audio senza spazi:
    nessuna attesa tra una frase e l'altra, anche senza internet. */
-const eng=n=>n.startsWith('piper:')?window.PIPER:n.startsWith('kokoro:')?window.KOKORO:null;
+const eng=n=>n.startsWith('piper:')?window.PIPER:null;   /* Kokoro non legge più dal vivo: genera l’audiolibro (vedi genBook) */
 const isPiper=()=>!!eng(voiceName);   /* vale per tutte le voci offline (Piper e Kokoro) */
 let actx=null,pNodes=[],pTimers=[],pCache=new Map(),pSlow=false,pReady=false;
 const mkCtx=()=>{if(!actx){actx=new (window.AudioContext||window.webkitAudioContext)()}try{actx.resume&&actx.resume()}catch(e){}return actx};
@@ -439,14 +507,6 @@ async function pRun(my){
     if(my===tok&&playing){await new Promise(r=>setTimeout(r,Math.max(0,(t-ctx.currentTime)*1000)));if(my===tok){if(toAudio>=0)jump(toAudio,0);else pause()}}   /* fine capitolo (→ audio narrato) o fine libro */
   }catch(e){if(my!==tok)return;console.error(e);toast('Voce offline: '+((e&&e.message)||e));pause()}
 }
-async function psample(id){
-  const E=eng(voiceName);
-  try{
-    const ctx=mkCtx();toast('Preparo la voce…');
-    const {pcm,rate}=await E.synth(id,'Buonasera. Questa è la mia voce: ti leggerò il libro con calma.',1/speed);
-    pStop();const b=ctx.createBuffer(1,pcm.length,rate);b.copyToChannel(pcm,0);const n=ctx.createBufferSource();n.buffer=b;n.connect(ctx.destination);n.start();pNodes.push(n);
-  }catch(e){toast('Voce offline: '+((e&&e.message)||e))}
-}
 /* ---------- audio narrato (MP3 del Narratore Libri) ----------
    Capitoli già registrati con le voci neurali: si ascoltano con un normale lettore audio, con riproduzione in
    background, controlli nella schermata di blocco e ripresa dal punto in cui eri. I capitoli senza audio
@@ -454,14 +514,23 @@ async function psample(id){
 const au=$('#au');
 let aT=0,aT0=0,aF=0,aUrl='',aSave=0;const aBlobs=new Map();
 const SILENT='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-const hasAud=(id,n)=>!!(window.SBTG&&SBTG.audioOf(id)[n]);
+/* audiolibro Kokoro: registro locale dei capitoli già generati (la presenza dei file si verifica all’avvio e prima di rigenerare) */
+const kauGet=id=>{try{const o=JSON.parse(ls('sb_kau_'+id)||'null');return o&&Array.isArray(o.done)?o:{voice:'',done:[]}}catch(e){return{voice:'',done:[]}}};
+const kauSet=(id,o)=>ls('sb_kau_'+id,JSON.stringify(o));
+const hasKau=(id,n)=>kauGet(id).done.includes(n);
+const hasAud=(id,n)=>!!(window.SBTG&&SBTG.audioOf(id)[n])||hasKau(id,n);
 const audOn=id=>ls('sb_au_'+id)!=='off';
 const useAudio=()=>!!cur&&audOn(cur.id)&&hasAud(cur.id,ci);
-const audCount=id=>window.SBTG?Object.keys(SBTG.audioOf(id)).length:0;
+const tgAudCount=id=>window.SBTG?Object.keys(SBTG.audioOf(id)).length:0;
+const audCount=id=>{const s=new Set(window.SBTG?Object.keys(SBTG.audioOf(id)).map(Number):[]);kauGet(id).done.forEach(n=>s.add(n));return s.size};
 let unlocked=false;   /* il primo tocco "sblocca" l'audio sui telefoni, che altrimenti bloccano l'avvio automatico */
 addEventListener('pointerdown',()=>{if(unlocked)return;unlocked=true;try{au.src=SILENT;const p=au.play();p&&p.then(()=>au.pause()).catch(()=>{})}catch(e){}},{once:true,passive:true});
 async function aBlob(id,n,my,visible){
   const k=id+':'+n;if(aBlobs.has(k))return aBlobs.get(k);
+  if(!(window.SBTG&&SBTG.audioOf(id)[n])&&hasKau(id,n)&&window.KOKORO){   /* audio Kokoro: si apre dal dispositivo, senza rete */
+    const bl=await KOKORO.kaudGet(id,n);if(!bl)throw new Error('Audio non trovato sul dispositivo: rigeneralo dalla scheda del libro');
+    aBlobs.set(k,bl);if(aBlobs.size>3)aBlobs.delete(aBlobs.keys().next().value);return bl;
+  }
   const loc=await SBTG.hasAudioLocal(id,n);
   if(visible&&my===tok)toast(loc?'Apro l’audio…':'Scarico l’audio del capitolo…');
   const bl=await SBTG.getAudio(id,n,p=>{if(visible&&!loc&&my===tok)toast('Scarico l’audio… '+Math.round(p*100)+'%')});
@@ -571,7 +640,6 @@ function vTips(){
    :'Per voci molto più naturali apri questa pagina con Microsoft Edge: offre le voci «Online (Natural)» (Elsa, Diego, Isabella e altre) senza installare nulla.';
   return '<p style="color:var(--mut);font-size:12px;line-height:1.45">'+t+'</p>';
 }
-function sample(){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('Buonasera. Questa è la mia voce: ti leggerò il libro con calma, fermandomi quando serve.');u.lang='it-IT';const v=pickVoice();if(v)u.voice=v;u.rate=clampR(speed);speechSynthesis.speak(u)}catch(e){}}
 async function pickPiper(full,btn){
   const E=eng(full),id=full.slice(full.indexOf(':')+1);
   if(!E||!E.ok()){toast('Questo browser non supporta le voci offline');return}
@@ -585,12 +653,12 @@ async function pickPiper(full,btn){
     catch(e){say('Download non riuscito: '+((e&&e.message)||e));return}
   }
   pCache.clear();voiceName=full;ls('sb_voice',voiceName);$('#scrim').click();
-  if(playing)jump(ci,si);else psample(id);
+  if(playing)jump(ci,si);
 }
 $('#vo').onclick=async()=>{
   loadVoices();const cv=pickVoice(),pv=!!eng(voiceName);
   let pip='';
-  for(const [E,pre,tit,nota] of [[window.PIPER,'piper:','Voci offline (Piper)','Sintesi neurale che gira sul tuo dispositivo. Dopo il primo download legge anche senza internet; sui telefoni più vecchi può essere lenta.'],[window.KOKORO,'kokoro:','Voci offline (Kokoro)','Voci neurali più naturali, anche loro sul dispositivo. Modello da circa 90 MB, scaricato una sola volta; più pesanti di Piper sui telefoni vecchi.']]){
+  for(const [E,pre,tit,nota] of [[window.PIPER,'piper:','Voci offline (Piper)','Sintesi neurale che gira sul tuo dispositivo. Dopo il primo download legge anche senza internet; sui telefoni più vecchi può essere lenta.']]){
     if(!E||!E.ok())continue;
     const st=await Promise.all(E.VOICES.map(v=>E.has(v.id)));
     pip+='<h3 style="margin-top:16px">'+tit+'</h3>'+E.VOICES.map((v,k)=>`<button class="it ${voiceName===pre+v.id?'on':''}" data-p="${pre+v.id}">${esc(v.nome)}<br><small style="color:var(--mut)">${st[k]?'Pronta · funziona senza internet':'Da scaricare una volta · '+esc(v.info)}</small></button>`).join('')+'<p style="color:var(--mut);font-size:12px;line-height:1.45">'+nota+'</p>';
@@ -608,7 +676,7 @@ $('#vo').onclick=async()=>{
       else ui();
       return}
     const p=e.target.closest('[data-p]');if(p){pickPiper(p.dataset.p,p);return}
-    const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si);else sample()}
+    const b=e.target.closest('[data-v]');if(b){voiceName=b.dataset.v;ls('sb_voice',voiceName);$('#scrim').click();if(playing)jump(ci,si)}
   }};
 /* ---- schermata di caricamento: l’app si mostra solo quando libreria, copertine e voci sono pronte ---- */
 (()=>{
@@ -652,6 +720,15 @@ $('#vo').onclick=async()=>{
     set('voci',.3);
     const wait=(k,ev)=>window[k]?0:new Promise(r=>addEventListener(ev,r,{once:true}));
     await limit(Promise.all([wait('PIPER','piper-load'),wait('KOKORO','kokoro-load')]),4000);
+    if(voiceName.startsWith('kokoro:')){voiceName='';ls('sb_voice','')}   /* Kokoro non legge più dal vivo */
+    /* verifica che i file dell’audiolibro Kokoro siano davvero sul dispositivo; se manca un capitolo lo si toglie dal registro */
+    if(window.KOKORO){
+      for(const key of Object.keys(localStorage).filter(x=>x.startsWith('sb_kau_'))){
+        const id=key.slice(7),m=kauGet(id),ok=[];
+        for(const n of m.done)if(await KOKORO.kaudHas(id,n))ok.push(n);
+        if(ok.length!==m.done.length){m.done=ok;kauSet(id,m)}
+      }
+    }
     set('voci',.5);
     /* la voce offline scelta si prepara qui, così non blocca il sito alla prima lettura */
     const E=eng(voiceName);
