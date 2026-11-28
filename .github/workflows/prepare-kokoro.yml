@@ -43,11 +43,11 @@ jobs:
       - name: Copia i file nel sito e salva
         run: |
           set -e
-          DEST=public; [ -f docs/index.html ] && DEST=docs
+          DEST=docs
           mkdir -p "$DEST/kokoro/ort"
           cp /tmp/k/kokoro.bundle.js "$DEST/kokoro/kokoro.bundle.js"
           ORT=$(find /tmp/k/node_modules -type d -path '*onnxruntime-web/dist' | head -1)
-          for f in "$ORT"/ort-wasm-simd-threaded*.wasm "$ORT"/ort-wasm-simd-threaded*.mjs; do
+          for f in "$ORT"/ort-wasm-simd-threaded.jsep.wasm "$ORT"/ort-wasm-simd-threaded.jsep.mjs; do   # solo le versioni jsep, le altre non vengono mai caricate
             [ -f "$f" ] && cp "$f" "$DEST/kokoro/ort/"
           done
           for f in kokoro.bundle.js ort/ort-wasm-simd-threaded.jsep.wasm; do

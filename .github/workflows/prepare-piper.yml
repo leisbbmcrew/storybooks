@@ -24,14 +24,14 @@ jobs:
       - name: Copia i file nel sito e salva
         run: |
           set -e
-          DEST=public; [ -f docs/index.html ] && DEST=docs
+          DEST=docs
           P=/tmp/p/node_modules
           mkdir -p "$DEST/piper/ort"
           for f in piper_phonemize.js piper_phonemize.wasm piper_phonemize.data; do cp "$P/@diffusionstudio/piper-wasm/build/$f" "$DEST/piper/$f"; done
           cp "$P/onnxruntime-web/dist/ort.min.js" "$DEST/piper/ort/ort.min.js"
           for f in "$P"/onnxruntime-web/dist/ort-wasm*.wasm "$P"/onnxruntime-web/dist/ort-wasm*.mjs; do
             [ -f "$f" ] || continue
-            case "$f" in *jsep*|*webgpu*|*asyncify*) ;; *) cp "$f" "$DEST/piper/ort/" ;; esac
+            case "$f" in *jsep*|*webgpu*|*asyncify*|*threaded*) ;; *) cp "$f" "$DEST/piper/ort/" ;; esac   # i file «threaded» non servono: Piper usa un solo thread
           done
           for f in piper_phonemize.js piper_phonemize.wasm piper_phonemize.data ort/ort.min.js; do
             test -s "$DEST/piper/$f" || { echo "Manca $f"; exit 1; }
